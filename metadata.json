@@ -1,0 +1,6 @@
+{
+  "name": "Order Fulfillment & Barcode Tracker",
+  "description": "An interactive order tracking system with barcode/QR code scanning that logs stages (Picking, Checking, Delivery) to Google Sheets in real-time.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
