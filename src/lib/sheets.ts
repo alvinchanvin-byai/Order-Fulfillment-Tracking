@@ -576,3 +576,34 @@ export async function saveUsersToSheet(accessToken: string, spreadsheetId: strin
   }
 }
 
+/**
+ * Searches the user's Google Drive for existing spreadsheets containing "Order Fulfillment & Barcode Tracker" in the title.
+ */
+export async function searchOrderSpreadsheets(accessToken: string): Promise<{ id: string; name: string }[]> {
+  try {
+    const query = encodeURIComponent("mimeType='application/vnd.google-apps.spreadsheet' and name contains 'Order Fulfillment & Barcode Tracker' and trashed = false");
+    const url = `https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id,name)`;
+    
+    const res = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+    
+    if (!res.ok) {
+      console.warn('Drive search failed or returned status:', res.status);
+      return [];
+    }
+    
+    const data = await res.json();
+    return (data.files || []).map((file: any) => ({
+      id: file.id,
+      name: file.name
+    }));
+  } catch (err) {
+    console.error('Failed to search spreadsheets:', err);
+    return [];
+  }
+}
+
+

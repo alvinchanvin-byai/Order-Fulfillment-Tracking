@@ -1954,8 +1954,50 @@ export default function App() {
   }
 
   if (!activeSystemUser) {
-    return <LoginScreen onLoginSuccess={handleSystemLoginSuccess} />;
+    return (
+      <LoginScreen 
+        onLoginSuccess={handleSystemLoginSuccess} 
+        googleUser={user}
+        googleToken={token}
+        needsGoogleAuth={needsAuth}
+        onGoogleSignIn={handleLogin}
+        onGoogleSignOut={handleLogout}
+        spreadsheetId={spreadsheetId}
+        spreadsheetName={spreadsheetName}
+        onConnectSpreadsheet={async (id) => {
+          if (!token) throw new Error('Google Sign-In is required to connect.');
+          
+          // Validate spreadsheet access & ensure 'Orders' tab exists
+          await ensureOrdersSheetExists(token, id.trim());
+          
+          const constructedUrl = `https://docs.google.com/spreadsheets/d/${id.trim()}/edit`;
+          setSpreadsheetId(id.trim());
+          setSpreadsheetUrl(constructedUrl);
+          setSpreadsheetName('Connected Custom Spreadsheet');
+
+          const config: SpreadsheetConfig = {
+            spreadsheetId: id.trim(),
+            spreadsheetUrl: constructedUrl,
+            sheetName: 'Connected Custom Spreadsheet'
+          };
+          safeStorage.setItem('order_tracker_sheet_config', JSON.stringify(config));
+          
+          // Fetch the latest customized system credentials right away to synchronize
+          try {
+            const sheetUsers = await fetchUsersFromSheet(token, id.trim());
+            if (sheetUsers && sheetUsers.length > 0) {
+              safeStorage.setItem('scanflow_users_credentials', JSON.stringify(sheetUsers));
+              // Dispatch custom event to let the LoginScreen render the active directory instantly
+              window.dispatchEvent(new Event('storage'));
+            }
+          } catch (err) {
+            console.error('Failed to sync users from Google Sheet on connecting device:', err);
+          }
+        }}
+      />
+    );
   }
+
 
   return (
     <div className="min-h-screen flex flex-col bg-[#F8FAFC] relative selection:bg-slate-900/10 text-slate-900 font-sans">
