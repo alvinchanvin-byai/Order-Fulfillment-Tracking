@@ -12,7 +12,7 @@ import {
   User,
   signOut
 } from 'firebase/auth';
-import type { Order, OrderStage } from '../types';
+import type { Order, OrderStage, UserCredentials } from '../types';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { safeSessionStorage } from './storage';
 
@@ -408,3 +408,171 @@ export async function updateOrderInSheet(
     throw new Error(`Failed to update order ${order.id} in sheet.`);
   }
 }
+
+// --- Users Synchronization in Google Sheets ---
+
+const USERS_SHEET_NAME = 'Users';
+
+const USERS_HEADERS = [
+  'User ID',
+  'Username',
+  'Password',
+  'Role',
+  'Status',
+  'Created At',
+  'Allowed Processes'
+];
+
+/**
+ * Fetches the spreadsheet tabs to check if the 'Users' sheet exists, creating it if needed.
+ */
+export async function ensureUsersSheetExists(accessToken: string, spreadsheetId: string): Promise<string> {
+  const metaUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties`;
+  const res = await fetch(metaUrl, {
+    headers: { 'Authorization': `Bearer ${accessToken}` }
+  });
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error?.message || 'Could not access spreadsheet for users initialization.');
+  }
+
+  const data = await res.json();
+  const sheets = data.sheets || [];
+  const exists = sheets.some((s: any) => s.properties?.title === USERS_SHEET_NAME);
+
+  if (!exists) {
+    const batchUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`;
+    const batchBody = {
+      requests: [
+        {
+          addSheet: {
+            properties: {
+              title: USERS_SHEET_NAME,
+              gridProperties: {
+                frozenRowCount: 1
+              }
+            }
+          }
+        }
+      ]
+    };
+
+    const addRes = await fetch(batchUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(batchBody)
+    });
+
+    if (!addRes.ok) {
+      throw new Error('Failed to create the "Users" sheet tab in your spreadsheet.');
+    }
+
+    // Write the headers
+    const range = `${USERS_SHEET_NAME}!A1:G1`;
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
+    await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ values: [USERS_HEADERS] })
+    });
+  }
+
+  return USERS_SHEET_NAME;
+}
+
+/**
+ * Reads all rows from the "Users" sheet and parses them into UserCredentials.
+ */
+export async function fetchUsersFromSheet(accessToken: string, spreadsheetId: string): Promise<UserCredentials[]> {
+  await ensureUsersSheetExists(accessToken, spreadsheetId);
+
+  const range = `${USERS_SHEET_NAME}!A2:G`;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}`;
+  
+  const res = await fetch(url, {
+    headers: { 'Authorization': `Bearer ${accessToken}` }
+  });
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error?.message || 'Failed to fetch user credentials from Google Sheet.');
+  }
+
+  const data = await res.json();
+  const rows: any[][] = data.values || [];
+
+  return rows.map((row) => {
+    let allowed: ('picking' | 'checking' | 'delivery')[] | undefined = undefined;
+    if (row[6]) {
+      try {
+        allowed = String(row[6]).split(',').map(s => s.trim()).filter(Boolean) as any[];
+      } catch (e) {
+        allowed = undefined;
+      }
+    }
+    return {
+      id: String(row[0] || '').trim(),
+      username: String(row[1] || '').trim(),
+      password: String(row[2] || '').trim(),
+      role: (row[3] || 'limited') as 'admin' | 'limited' | 'view',
+      status: (row[4] || 'active') as 'active' | 'inactive',
+      createdAt: String(row[5] || ''),
+      allowedProcesses: allowed
+    };
+  }).filter(user => user.id !== '' && user.username !== '');
+}
+
+/**
+ * Overwrites all users in the "Users" sheet.
+ */
+export async function saveUsersToSheet(accessToken: string, spreadsheetId: string, users: UserCredentials[]): Promise<void> {
+  await ensureUsersSheetExists(accessToken, spreadsheetId);
+
+  // 1. Clear the existing users rows A2:G
+  const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(USERS_SHEET_NAME + '!A2:G')}:clear`;
+  await fetch(clearUrl, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (users.length === 0) return;
+
+  // 2. Write the new user rows
+  const range = `${USERS_SHEET_NAME}!A2:G${users.length + 1}`;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
+
+  const values = users.map(user => [
+    user.id,
+    user.username,
+    user.password || '',
+    user.role,
+    user.status,
+    user.createdAt,
+    user.allowedProcesses ? user.allowedProcesses.join(',') : ''
+  ]);
+
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ values })
+  });
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error?.message || 'Failed to sync users to Google Sheet.');
+  }
+}
+

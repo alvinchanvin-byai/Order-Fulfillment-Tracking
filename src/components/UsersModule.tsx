@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { UserCredentials } from '../types';
 import { safeStorage } from '../lib/storage';
+import { saveUsersToSheet } from '../lib/sheets';
 
 const DEFAULT_USERS: UserCredentials[] = [
   { id: '1', username: 'admin', password: 'admin', role: 'admin', status: 'active', createdAt: '2026-06-03T00:00:00.000Z' },
@@ -26,7 +27,12 @@ const DEFAULT_USERS: UserCredentials[] = [
   { id: '5', username: 'mbk', password: 'mbk123', role: 'admin', status: 'active', createdAt: '2026-06-24T00:00:00.000Z' }
 ];
 
-export function UsersModule() {
+interface UsersModuleProps {
+  token?: string | null;
+  spreadsheetId?: string | null;
+}
+
+export function UsersModule({ token, spreadsheetId }: UsersModuleProps) {
   const [usersList, setUsersList] = useState<UserCredentials[]>([]);
   const [usernameInput, setUsernameInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
@@ -49,6 +55,24 @@ export function UsersModule() {
   
   // Visual toast notification
   const [notification, setNotification] = useState<{ text: string; type: 'success' | 'amber' | 'error' } | null>(null);
+
+  // Helper to persist users to state, local storage and Google Sheets
+  const persistUsers = async (updatedList: UserCredentials[]) => {
+    setUsersList(updatedList);
+    safeStorage.setItem('scanflow_users_credentials', JSON.stringify(updatedList));
+    
+    // Dispatch storage event so other components (like LoginScreen or active layout) sync instantly
+    window.dispatchEvent(new Event('storage'));
+
+    if (token && spreadsheetId) {
+      try {
+        await saveUsersToSheet(token, spreadsheetId, updatedList);
+      } catch (err) {
+        console.error('Failed to sync updated users with spreadsheet:', err);
+        triggerNotification('Changes saved locally, but could not sync to Google Sheet.', 'amber');
+      }
+    }
+  };
 
   // Load local users on mounting
   useEffect(() => {
@@ -107,6 +131,28 @@ export function UsersModule() {
     safeStorage.setItem('scanflow_users_credentials', JSON.stringify(DEFAULT_USERS));
   }, []);
 
+  // Listen to storage/custom events to keep the user list synchronized in real-time
+  useEffect(() => {
+    const syncUsersFromStorage = () => {
+      const cached = safeStorage.getItem('scanflow_users_credentials');
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setUsersList(parsed);
+          }
+        } catch (e) {
+          console.error('Failed to parse cached users from storage event in UsersModule', e);
+        }
+      }
+    };
+
+    window.addEventListener('storage', syncUsersFromStorage);
+    return () => {
+      window.removeEventListener('storage', syncUsersFromStorage);
+    };
+  }, []);
+
   const triggerNotification = (text: string, type: 'success' | 'amber' | 'error' = 'success') => {
     setNotification({ text, type });
     setTimeout(() => {
@@ -131,8 +177,7 @@ export function UsersModule() {
       }
       return u;
     });
-    setUsersList(updated);
-    safeStorage.setItem('scanflow_users_credentials', JSON.stringify(updated));
+    persistUsers(updated);
     setEditingUserId(null);
     triggerNotification('Password updated successfully.', 'success');
   };
@@ -214,8 +259,7 @@ export function UsersModule() {
         return u;
       });
 
-      setUsersList(updated);
-      safeStorage.setItem('scanflow_users_credentials', JSON.stringify(updated));
+      persistUsers(updated);
 
       // Sync active logged-in user in real-time if they edit themselves
       const activeUserStr = safeStorage.getItem('scanflow_active_system_user');
@@ -266,8 +310,7 @@ export function UsersModule() {
     };
 
     const updated = [...usersList, newUser];
-    setUsersList(updated);
-    safeStorage.setItem('scanflow_users_credentials', JSON.stringify(updated));
+    persistUsers(updated);
 
     // Reset inputs
     setUsernameInput('');
@@ -289,8 +332,7 @@ export function UsersModule() {
     }
 
     const updated = usersList.filter(u => u.id !== id);
-    setUsersList(updated);
-    safeStorage.setItem('scanflow_users_credentials', JSON.stringify(updated));
+    persistUsers(updated);
     triggerNotification(`Removed account credential profile: ${username}`, 'amber');
   };
 

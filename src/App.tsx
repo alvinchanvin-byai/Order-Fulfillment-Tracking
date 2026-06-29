@@ -54,7 +54,9 @@ import {
   updateOrderInSheet,
   createOrderSpreadsheet,
   ensureOrdersSheetExists,
-  setCachedToken
+  setCachedToken,
+  fetchUsersFromSheet,
+  saveUsersToSheet
 } from './lib/sheets';
 import { safeStorage } from './lib/storage';
 
@@ -183,6 +185,28 @@ export default function App() {
         console.error('Failed to parse saved spreadsheet config', e);
       }
     }
+  }, []);
+
+  // Listen to storage/custom events to sync the logged-in active user session in real-time
+  useEffect(() => {
+    const handleStorageChange = () => {
+      try {
+        const cached = safeStorage.getItem('scanflow_active_system_user');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          setActiveSystemUser(parsed);
+        } else {
+          setActiveSystemUser(null);
+        }
+      } catch (e) {
+        console.error('Failed to sync user session from storage event', e);
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+    };
   }, []);
 
   // Sync / Fetch Orders when Spreadsheet ID or Token changes
@@ -382,6 +406,29 @@ export default function App() {
         if (updatedSelected) {
           setSelectedOrder(updatedSelected);
         }
+      }
+
+      // Try to fetch users from Google Sheet to ensure all created users are restored
+      try {
+        const sheetUsers = await fetchUsersFromSheet(token, spreadsheetId);
+        if (sheetUsers && sheetUsers.length > 0) {
+          // If the sheet has users, it's the source of truth! Store in localStorage
+          safeStorage.setItem('scanflow_users_credentials', JSON.stringify(sheetUsers));
+          
+          // Trigger custom storage event so other components (e.g. login screen or users module) reload
+          window.dispatchEvent(new Event('storage'));
+        } else {
+          // If the sheet has no user records, populate the sheet with current local storage users to bootstrap it
+          const localCached = safeStorage.getItem('scanflow_users_credentials');
+          if (localCached) {
+            const parsed = JSON.parse(localCached);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              await saveUsersToSheet(token, spreadsheetId, parsed);
+            }
+          }
+        }
+      } catch (userErr) {
+        console.error('Failed to sync users with spreadsheet', userErr);
       }
     } catch (err: any) {
       console.error('Fetch orders failed', err);
@@ -2254,7 +2301,7 @@ export default function App() {
         ) : currentTab === 'reports' ? (
           <ReportModule orders={orders} />
         ) : currentTab === 'users' ? (
-          <UsersModule />
+          <UsersModule token={token} spreadsheetId={spreadsheetId} />
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           
