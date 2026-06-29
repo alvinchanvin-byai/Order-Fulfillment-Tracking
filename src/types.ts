@@ -59,3 +59,14 @@ export interface CustomerMaster {
   defaultProvince: string;
 }
 
+export interface UserCredentials {
+  id: string;
+  username: string;
+  password?: string;
+  role: 'admin' | 'limited' | 'view';
+  status: 'active' | 'inactive';
+  createdAt: string;
+  allowedProcesses?: ('picking' | 'checking' | 'delivery')[];
+}
+
+

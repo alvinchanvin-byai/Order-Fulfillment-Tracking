@@ -14,6 +14,7 @@ import {
 } from 'firebase/auth';
 import type { Order, OrderStage } from '../types';
 import firebaseConfig from '../../firebase-applet-config.json';
+import { safeSessionStorage } from './storage';
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
@@ -35,10 +36,8 @@ export const initAuth = (
     if (user) {
       if (cachedAccessToken) {
         if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
-      } else {
-        // If we have a user but no cached token, we can try to prompt or let the main UI handle sign-in.
-        // Firebase auth persistent state keeps the user logged in, but we need to re-fetch the token
-        // if cached token is empty. We can call googleSignIn or just let them click Sign In.
+      } else if (!isSigningIn) {
+        cachedAccessToken = null;
         if (onAuthFailure) onAuthFailure();
       }
     } else {
@@ -246,7 +245,8 @@ export async function fetchOrdersFromSheet(accessToken: string, spreadsheetId: s
   });
 
   if (!res.ok) {
-    throw new Error('Failed to fetch values from Google Sheet.');
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error?.message || 'Failed to fetch values from Google Sheet.');
   }
 
   const data = await res.json();
@@ -277,6 +277,26 @@ export async function fetchOrdersFromSheet(accessToken: string, spreadsheetId: s
 }
 
 /**
+ * Formats ISO date-time strings to "MMM DD, YYYY, HH:mm:ss" format for Google Sheets.
+ */
+function formatDateTimeForSheets(dateInput: string | Date | undefined | null): string {
+  if (!dateInput) return '';
+  const d = new Date(dateInput);
+  if (isNaN(d.getTime())) return String(dateInput);
+  
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const month = months[d.getMonth()];
+  const day = d.getDate();
+  const year = d.getFullYear();
+  
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  
+  return `${month} ${day}, ${year}, ${hh}:${mm}:${ss}`;
+}
+
+/**
  * Appends a new order row to the spreadsheet.
  */
 export async function addOrderToSheet(
@@ -296,14 +316,14 @@ export async function addOrderToSheet(
   const rowValues = [
     order.id,
     order.status,
-    order.pickStart,
-    order.pickEnd,
-    order.checkStart,
-    order.checkEnd,
-    order.deliveryStart,
-    order.deliveryEnd,
+    formatDateTimeForSheets(order.pickStart),
+    formatDateTimeForSheets(order.pickEnd),
+    formatDateTimeForSheets(order.checkStart),
+    formatDateTimeForSheets(order.checkEnd),
+    formatDateTimeForSheets(order.deliveryStart),
+    formatDateTimeForSheets(order.deliveryEnd),
     order.items,
-    order.lastUpdated,
+    formatDateTimeForSheets(order.lastUpdated),
     order.customerName || '',
     order.packingListNo || '',
     order.totalPackage || '',
@@ -355,14 +375,14 @@ export async function updateOrderInSheet(
   const rowValues = [
     order.id,
     order.status,
-    order.pickStart,
-    order.pickEnd,
-    order.checkStart,
-    order.checkEnd,
-    order.deliveryStart,
-    order.deliveryEnd,
+    formatDateTimeForSheets(order.pickStart),
+    formatDateTimeForSheets(order.pickEnd),
+    formatDateTimeForSheets(order.checkStart),
+    formatDateTimeForSheets(order.checkEnd),
+    formatDateTimeForSheets(order.deliveryStart),
+    formatDateTimeForSheets(order.deliveryEnd),
     order.items,
-    order.lastUpdated,
+    formatDateTimeForSheets(order.lastUpdated),
     order.customerName || '',
     order.packingListNo || '',
     order.totalPackage || '',

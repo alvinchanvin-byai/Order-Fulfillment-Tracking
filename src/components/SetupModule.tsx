@@ -5,6 +5,7 @@
 
 import { useState, useEffect, FormEvent, SVGProps, ChangeEvent } from 'react';
 import * as XLSX from 'xlsx';
+import { safeStorage } from '../lib/storage';
 import { 
   Users, 
   MapPin, 
@@ -207,22 +208,22 @@ export function SetupModule() {
 
   // Load from local storage on mount
   useEffect(() => {
-    const savedCusts = localStorage.getItem('scanflow_customers');
+    const savedCusts = safeStorage.getItem('scanflow_customers');
     setCustomers(savedCusts ? JSON.parse(savedCusts) : DEFAULT_CUSTOMERS);
 
-    const savedKhans = localStorage.getItem('scanflow_khans');
+    const savedKhans = safeStorage.getItem('scanflow_khans');
     setKhans(savedKhans ? JSON.parse(savedKhans) : DEFAULT_KHANS);
 
-    const savedProvs = localStorage.getItem('scanflow_provinces');
+    const savedProvs = safeStorage.getItem('scanflow_provinces');
     setProvinces(savedProvs ? JSON.parse(savedProvs) : DEFAULT_PROVINCES);
 
-    const savedBus = localStorage.getItem('scanflow_bus');
+    const savedBus = safeStorage.getItem('scanflow_bus');
     setBus(savedBus ? JSON.parse(savedBus) : DEFAULT_BUs);
 
-    const savedPackageUnits = localStorage.getItem('scanflow_package_units');
+    const savedPackageUnits = safeStorage.getItem('scanflow_package_units');
     setPackageUnits(savedPackageUnits ? JSON.parse(savedPackageUnits) : DEFAULT_PACKAGE_UNITS);
 
-    const savedMasters = localStorage.getItem('scanflow_customer_master');
+    const savedMasters = safeStorage.getItem('scanflow_customer_master');
     setCustomerMasters(savedMasters ? JSON.parse(savedMasters) : DEFAULT_CUSTOMER_MASTER);
   }, []);
 
@@ -235,7 +236,7 @@ export function SetupModule() {
   };
 
   const updateStorage = (key: string, data: string[], message: string) => {
-    localStorage.setItem(key, JSON.stringify(data));
+    safeStorage.setItem(key, JSON.stringify(data));
     showToast(message, 'success');
   };
 
@@ -414,7 +415,7 @@ export function SetupModule() {
         }
 
         // Save immediately to localStorage
-        localStorage.setItem(storageKey, JSON.stringify(updatedList));
+        safeStorage.setItem(storageKey, JSON.stringify(updatedList));
         showToast(`Successfully registered ${updatedList.length} items to ${label}!`, 'success');
       } catch (err: any) {
         showToast(`Error processing book: ${err.message || err}`, 'info');
@@ -685,7 +686,7 @@ export function SetupModule() {
     setMCustName('');
     setMCustKhan('');
     setMCustProvince('');
-    localStorage.setItem('scanflow_customer_master', JSON.stringify(updated));
+    safeStorage.setItem('scanflow_customer_master', JSON.stringify(updated));
     showToast(`Added Customer Master: ${name}`);
   };
 
@@ -709,7 +710,7 @@ export function SetupModule() {
     };
     setCustomerMasters(updated);
     setEditingMasterIndex(null);
-    localStorage.setItem('scanflow_customer_master', JSON.stringify(updated));
+    safeStorage.setItem('scanflow_customer_master', JSON.stringify(updated));
     showToast(`Updated Customer Master "${oldName}" to "${name}"`);
   };
 
@@ -724,7 +725,7 @@ export function SetupModule() {
       onConfirm: () => {
         const updated = customerMasters.filter((_, i) => i !== index);
         setCustomerMasters(updated);
-        localStorage.setItem('scanflow_customer_master', JSON.stringify(updated));
+        safeStorage.setItem('scanflow_customer_master', JSON.stringify(updated));
         showToast(`Deleted Customer Master: ${oldName}`);
         setConfirmModal(null);
       }
@@ -856,7 +857,7 @@ export function SetupModule() {
     }
 
     setCustomerMasters(updated);
-    localStorage.setItem('scanflow_customer_master', JSON.stringify(updated));
+    safeStorage.setItem('scanflow_customer_master', JSON.stringify(updated));
     showToast(`Successfully imported ${updated.length} customer master records!`, 'success');
     setImportChoiceModal(null);
   };
@@ -876,12 +877,12 @@ export function SetupModule() {
         setBus(DEFAULT_BUs);
         setPackageUnits(DEFAULT_PACKAGE_UNITS);
         setCustomerMasters(DEFAULT_CUSTOMER_MASTER);
-        localStorage.setItem('scanflow_customers', JSON.stringify(DEFAULT_CUSTOMERS));
-        localStorage.setItem('scanflow_khans', JSON.stringify(DEFAULT_KHANS));
-        localStorage.setItem('scanflow_provinces', JSON.stringify(DEFAULT_PROVINCES));
-        localStorage.setItem('scanflow_bus', JSON.stringify(DEFAULT_BUs));
-        localStorage.setItem('scanflow_package_units', JSON.stringify(DEFAULT_PACKAGE_UNITS));
-        localStorage.setItem('scanflow_customer_master', JSON.stringify(DEFAULT_CUSTOMER_MASTER));
+        safeStorage.setItem('scanflow_customers', JSON.stringify(DEFAULT_CUSTOMERS));
+        safeStorage.setItem('scanflow_khans', JSON.stringify(DEFAULT_KHANS));
+        safeStorage.setItem('scanflow_provinces', JSON.stringify(DEFAULT_PROVINCES));
+        safeStorage.setItem('scanflow_bus', JSON.stringify(DEFAULT_BUs));
+        safeStorage.setItem('scanflow_package_units', JSON.stringify(DEFAULT_PACKAGE_UNITS));
+        safeStorage.setItem('scanflow_customer_master', JSON.stringify(DEFAULT_CUSTOMER_MASTER));
         showToast('Successfully restored default registry values.', 'success');
         setConfirmModal(null);
       }

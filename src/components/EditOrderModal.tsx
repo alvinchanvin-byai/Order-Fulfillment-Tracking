@@ -7,6 +7,7 @@ import { useState, FormEvent, useEffect, useRef } from 'react';
 import { X, Edit3, Package, Info, QrCode, Camera, AlertCircle, Sparkles, Check } from 'lucide-react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { Order, CustomerMaster } from '../types';
+import { safeStorage } from '../lib/storage';
 
 const DEFAULT_CUSTOMER_MASTER: CustomerMaster[] = [
   { customerName: 'Pracheachun Pharmacy (SHV)', defaultKhan: 'Preah Sihanouk Municipali', defaultProvince: 'Preah Sihanouk' },
@@ -124,7 +125,7 @@ export function EditOrderModal({ isOpen, onClose, order, onUpdate }: EditOrderMo
     if (!name) return;
 
     // Load master list from local storage
-    const savedMasters = localStorage.getItem('scanflow_customer_master');
+    const savedMasters = safeStorage.getItem('scanflow_customer_master');
     let mastersList: CustomerMaster[] = DEFAULT_CUSTOMER_MASTER;
     if (savedMasters) {
       try {
@@ -190,12 +191,12 @@ export function EditOrderModal({ isOpen, onClose, order, onUpdate }: EditOrderMo
   useEffect(() => {
     if (isOpen) {
       let combinedCustomers = [...CUSTOMER_OPTIONS];
-      const savedCusts = localStorage.getItem('scanflow_customers');
+      const savedCusts = safeStorage.getItem('scanflow_customers');
       if (savedCusts) {
         combinedCustomers = JSON.parse(savedCusts);
       }
       
-      const savedMasters = localStorage.getItem('scanflow_customer_master');
+      const savedMasters = safeStorage.getItem('scanflow_customer_master');
       if (savedMasters) {
         try {
           const parsed = JSON.parse(savedMasters) as CustomerMaster[];
@@ -210,13 +211,13 @@ export function EditOrderModal({ isOpen, onClose, order, onUpdate }: EditOrderMo
       }
       setCustomersList(combinedCustomers);
       
-      const savedKhans = localStorage.getItem('scanflow_khans');
+      const savedKhans = safeStorage.getItem('scanflow_khans');
       if (savedKhans) setKhansList(JSON.parse(savedKhans));
       
-      const savedProvs = localStorage.getItem('scanflow_provinces');
+      const savedProvs = safeStorage.getItem('scanflow_provinces');
       if (savedProvs) setProvincesList(JSON.parse(savedProvs));
       
-      const savedBus = localStorage.getItem('scanflow_bus');
+      const savedBus = safeStorage.getItem('scanflow_bus');
       if (savedBus) setBusList(JSON.parse(savedBus));
     }
   }, [isOpen]);
@@ -241,7 +242,7 @@ export function EditOrderModal({ isOpen, onClose, order, onUpdate }: EditOrderMo
       setError(null);
 
       // Load package units list from localStorage
-      const saved = localStorage.getItem('scanflow_package_units');
+      const saved = safeStorage.getItem('scanflow_package_units');
       const list: string[] = saved ? JSON.parse(saved) : ['ctn', 'Boxes', 'drum', 'pcs', 'bags', 'pallets', 'cases', 'rolls', 'vials', 'bottles', 'pails'];
       
       const rawTotalPkg = (order.totalPackage || '').trim();
@@ -441,15 +442,15 @@ export function EditOrderModal({ isOpen, onClose, order, onUpdate }: EditOrderMo
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
-      <div className="bg-white rounded-[32px] w-full max-w-4xl shadow-[8px_8px_0px_0px_rgba(15,23,42,1)] border-4 border-slate-900 overflow-hidden transform transition-all animate-in fade-in zoom-in-95 duration-200 my-8">
+    <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs flex items-start sm:items-center justify-center sm:p-4 p-0 z-50 overflow-y-auto">
+      <div className="bg-white rounded-none sm:rounded-[32px] w-full max-w-4xl min-h-screen sm:min-h-0 shadow-none sm:shadow-[8px_8px_0px_0px_rgba(15,23,42,1)] border-0 sm:border-4 border-slate-900 overflow-hidden transform transition-all animate-in fade-in zoom-in-95 duration-200 sm:my-8 my-0 flex flex-col">
         {/* Modal Header */}
-        <div className="px-8 py-5 bg-slate-900 text-white border-b-4 border-slate-900 flex items-center justify-between">
+        <div className="px-4 sm:px-8 py-4 sm:py-5 bg-slate-900 text-white border-b-4 border-slate-900 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
-            <Edit3 className="w-6 h-6 text-amber-450 shrink-0" />
+            <Edit3 className="w-5 h-5 sm:w-6 sm:h-6 text-amber-450 shrink-0" />
             <div>
-              <h3 className="font-display font-black text-white text-xl tracking-wide uppercase">Edit Order Master Log</h3>
-              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Google Sheets Operations Registry Update</p>
+              <h3 className="font-display font-black text-white text-base sm:text-xl tracking-wide uppercase">Edit Order Master Log</h3>
+              <p className="text-[9px] sm:text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Google Sheets Operations Registry Update</p>
             </div>
           </div>
           <button
@@ -541,7 +542,7 @@ export function EditOrderModal({ isOpen, onClose, order, onUpdate }: EditOrderMo
         )}
 
         {/* Update Form Content */}
-        <form onSubmit={handleSubmit} className="p-8 space-y-6">
+        <form onSubmit={handleSubmit} className="p-4 sm:p-8 space-y-4 sm:space-y-6 flex-1 flex flex-col justify-between">
           {error && (
             <div className="bg-red-50 text-red-700 text-xs p-3.5 rounded-2xl border-2 border-red-200 flex items-start gap-2.5 font-sans font-semibold">
               <Info className="w-4 h-4 shrink-0 text-red-500 mt-0.5" />
@@ -550,7 +551,7 @@ export function EditOrderModal({ isOpen, onClose, order, onUpdate }: EditOrderMo
           )}
 
           {/* MAIN GRID */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
             
             {/* Field 1: SO# (Order ID) */}
             <div className="space-y-2 col-span-1">
@@ -750,7 +751,7 @@ export function EditOrderModal({ isOpen, onClose, order, onUpdate }: EditOrderMo
             {/* Field 8: Select Assigned To */}
             <div className="space-y-2 col-span-1">
               <label className="block text-[11px] font-extrabold text-slate-500 uppercase tracking-widest font-sans">
-                Assigned To
+                Started by
               </label>
               <div className="rounded-xl overflow-hidden shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] border-2 border-slate-900">
                 <select
@@ -759,7 +760,10 @@ export function EditOrderModal({ isOpen, onClose, order, onUpdate }: EditOrderMo
                   className="w-full bg-slate-50 px-3 py-2.5 text-sm focus:bg-white outline-none font-bold"
                   disabled={isSubmitting}
                 >
-                  <option value="">Select Agent/Driver</option>
+                  <option value="">Started by</option>
+                  {assignedTo && !ASSIGNED_OPTIONS.includes(assignedTo) && (
+                    <option value={assignedTo}>{assignedTo}</option>
+                  )}
                   {ASSIGNED_OPTIONS.map(opt => (
                     <option key={opt} value={opt}>{opt}</option>
                   ))}
@@ -787,11 +791,11 @@ export function EditOrderModal({ isOpen, onClose, order, onUpdate }: EditOrderMo
           </div>
 
           {/* Form Actions Footer */}
-          <div className="pt-6 flex items-center justify-end gap-3.5 border-t-2 border-slate-900">
+          <div className="pt-4 sm:pt-6 pb-6 sm:pb-0 flex flex-col sm:flex-row items-center justify-end gap-3 sm:gap-3.5 border-t-2 border-slate-900 shrink-0">
             <button
               type="button"
               onClick={onClose}
-              className="text-slate-500 hover:bg-slate-100 hover:text-slate-950 font-extrabold px-5 py-2.5 rounded-xl text-sm transition-colors uppercase tracking-wider"
+              className="w-full sm:w-auto text-slate-500 hover:bg-slate-100 hover:text-slate-950 font-extrabold px-5 py-3 rounded-xl text-sm transition-colors uppercase tracking-wider text-center"
               disabled={isSubmitting}
             >
               Cancel
@@ -799,7 +803,7 @@ export function EditOrderModal({ isOpen, onClose, order, onUpdate }: EditOrderMo
             
             <button
               type="submit"
-              className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-8 py-3.5 border-3 border-slate-950 rounded-2xl text-sm uppercase tracking-widest transition-all shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] hover:translate-y-[-1px] hover:shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] active:translate-y-[1px] active:shadow-[1px_1px_0px_0px_rgba(15,23,42,1)] flex items-center justify-center gap-2 cursor-pointer"
+              className="w-full sm:w-auto bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-8 py-4 sm:py-3.5 border-3 border-slate-950 rounded-2xl text-sm uppercase tracking-widest transition-all shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] hover:translate-y-[-1px] hover:shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] active:translate-y-[1px] active:shadow-[1px_1px_0px_0px_rgba(15,23,42,1)] flex items-center justify-center gap-2 cursor-pointer"
               disabled={isSubmitting}
             >
               {isSubmitting ? (

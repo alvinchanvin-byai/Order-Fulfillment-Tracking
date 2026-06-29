@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useEffect, useState, useRef, FormEvent } from 'react';
+import { useEffect, useState, useRef, FormEvent, useMemo } from 'react';
 import {
   Package,
   Search,
@@ -31,8 +31,18 @@ import {
   QrCode,
   MessageSquare,
   FileText,
-  Settings
+  Settings,
+  Users,
+  Truck,
+  Layers,
+  ClipboardList,
+  ClipboardCheck,
+  User,
+  Calendar,
+  Receipt,
+  Clipboard
 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 
 import type { Order, OrderStage, ScanResult, SpreadsheetConfig } from './types';
 import {
@@ -46,6 +56,7 @@ import {
   ensureOrdersSheetExists,
   setCachedToken
 } from './lib/sheets';
+import { safeStorage } from './lib/storage';
 
 import { CameraScanner } from './components/CameraScanner';
 import { OrderFormModal } from './components/OrderFormModal';
@@ -53,6 +64,10 @@ import { EditOrderModal } from './components/EditOrderModal';
 import { DeliveryStatusModal, DeliveryOutcome } from './components/DeliveryStatusModal';
 import { ConfirmationDialog } from './components/ConfirmationDialog';
 import { SetupModule } from './components/SetupModule';
+import { ReportModule } from './components/ReportModule';
+import { UsersModule } from './components/UsersModule';
+import { LoginScreen } from './components/LoginScreen';
+import { UserCredentials } from './types';
 
 export default function App() {
   // Auth state
@@ -60,6 +75,19 @@ export default function App() {
   const [token, setToken] = useState<string | null>(null);
   const [needsAuth, setNeedsAuth] = useState(true);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  // System credentials session state
+  const [activeSystemUser, setActiveSystemUser] = useState<UserCredentials | null>(() => {
+    try {
+      const cached = safeStorage.getItem('scanflow_active_system_user');
+      if (cached) {
+        return JSON.parse(cached);
+      }
+    } catch (e) {
+      console.error('Error fetching cached system user session:', e);
+    }
+    return null;
+  });
 
   // Spreadsheet config state
   const [spreadsheetId, setSpreadsheetId] = useState<string>('');
@@ -69,11 +97,36 @@ export default function App() {
   const [sheetIdInput, setSheetIdInput] = useState('');
 
   // Orders state
-  const [orders, setOrders] = useState<Order[]>([]);
+  const [orders, setOrders] = useState<Order[]>(() => {
+    try {
+      const cached = safeStorage.getItem('offline_orders_snapshot');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && Array.isArray(parsed.orders)) {
+          return parsed.orders;
+        }
+      }
+    } catch (e) {
+      console.error('Failed to restore offline orders snapshot', e);
+    }
+    return [];
+  });
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
-  const [activeFilter, setActiveFilter] = useState<'All' | 'Registered' | 'Picking' | 'Checking' | 'Delivery' | 'Completed'>('All');
+  const [activeFilter, setActiveFilter] = useState<'All' | 'Registered' | 'Picking' | 'Checking' | 'Waiting Delivery' | 'Delivery' | 'Completed'>('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+
+  // QR & Tracking state
+  const [trackingOrderId, setTrackingOrderId] = useState<string | null>(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get('track') || urlParams.get('so') || null;
+  });
+  const [localSearch, setLocalSearch] = useState<string>(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get('track') || urlParams.get('so') || '';
+  });
+  const [qrModalOrder, setQrModalOrder] = useState<Order | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // Modals / Dialogs State
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -100,7 +153,7 @@ export default function App() {
   const [scannerActive, setScannerActive] = useState(false);
   const [scanLogs, setScanLogs] = useState<ScanResult[]>([]);
   const [manualScanMessage, setManualScanMessage] = useState<{ text: string; isError: boolean } | null>(null);
-  const [currentTab, setCurrentTab] = useState<'registry' | 'scanner' | 'setup'>('registry');
+  const [currentTab, setCurrentTab] = useState<'registry' | 'scanner' | 'setup' | 'reports' | 'users'>('scanner');
 
   const barcodeInputRef = useRef<HTMLInputElement>(null);
 
@@ -119,7 +172,7 @@ export default function App() {
     );
 
     // Retrieve saved spreadsheet from localStorage
-    const savedConfig = localStorage.getItem('order_tracker_sheet_config');
+    const savedConfig = safeStorage.getItem('order_tracker_sheet_config');
     if (savedConfig) {
       try {
         const config = JSON.parse(savedConfig) as SpreadsheetConfig;
@@ -138,6 +191,85 @@ export default function App() {
       handleRefreshOrders();
     }
   }, [token, spreadsheetId]);
+
+  // Sync orders to offline snapshot cache whenever orders updates
+  useEffect(() => {
+    if (orders && orders.length > 0) {
+      try {
+        safeStorage.setItem('offline_orders_snapshot', JSON.stringify({
+          lastSync: new Date().toISOString(),
+          orders: orders
+        }));
+      } catch (e) {
+        console.error('Error caching offline snapshot', e);
+      }
+    }
+  }, [orders]);
+
+  // Auto-scroll the active filter tab button into view when activeFilter changes
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const activeTabEl = document.getElementById(`filter-tab-${activeFilter.replace(/\s+/g, '-')}`);
+      if (activeTabEl) {
+        activeTabEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      }
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [activeFilter]);
+
+  // Helper to determine if a filter/tab is allowed for the active user
+  const isFilterTabAllowed = (tab: 'All' | 'Registered' | 'Picking' | 'Checking' | 'Waiting Delivery' | 'Delivery' | 'Completed'): boolean => {
+    if (!activeSystemUser) return true;
+    if (activeSystemUser.role === 'admin') return true;
+
+    const allowed = activeSystemUser.allowedProcesses || ['picking', 'checking', 'delivery'];
+
+    if (tab === 'Registered' && !allowed.includes('picking')) return false;
+    if (tab === 'Picking' && !allowed.includes('picking')) return false;
+    if (tab === 'Checking' && !allowed.includes('checking')) return false;
+    if (tab === 'Waiting Delivery' && !allowed.includes('delivery')) return false;
+    if (tab === 'Delivery' && !allowed.includes('delivery')) return false;
+    if (tab === 'Completed' && !allowed.includes('delivery')) return false;
+
+    return true;
+  };
+
+  // Reset active filter if the current one becomes restricted
+  useEffect(() => {
+    if (activeSystemUser && activeSystemUser.role !== 'admin') {
+      const allowed = activeSystemUser.allowedProcesses || ['picking', 'checking', 'delivery'];
+      
+      const isAllowed = (tab: string) => {
+        if (tab === 'All') return true;
+        if (tab === 'Registered' && !allowed.includes('picking')) return false;
+        if (tab === 'Picking' && !allowed.includes('picking')) return false;
+        if (tab === 'Checking' && !allowed.includes('checking')) return false;
+        if (tab === 'Waiting Delivery' && !allowed.includes('delivery')) return false;
+        if (tab === 'Delivery' && !allowed.includes('delivery')) return false;
+        if (tab === 'Completed' && !allowed.includes('delivery')) return false;
+        return true;
+      };
+
+      if (!isAllowed(activeFilter)) {
+        const tabs: ('All' | 'Registered' | 'Picking' | 'Checking' | 'Waiting Delivery' | 'Delivery' | 'Completed')[] = [
+          'All', 'Registered', 'Picking', 'Checking', 'Waiting Delivery', 'Delivery', 'Completed'
+        ];
+        const firstAllowed = tabs.find(t => isAllowed(t));
+        if (firstAllowed) {
+          setActiveFilter(firstAllowed);
+        }
+      }
+    }
+  }, [activeSystemUser, activeFilter]);
+
+  // Ensure non-admins are redirected if they are on a restricted tab
+  useEffect(() => {
+    if (activeSystemUser && activeSystemUser.role !== 'admin') {
+      if (currentTab === 'setup' || currentTab === 'users') {
+        setCurrentTab('scanner');
+      }
+    }
+  }, [activeSystemUser, currentTab]);
 
   // Handle Google OAuth Sign-In
   const handleLogin = async () => {
@@ -183,7 +315,7 @@ export default function App() {
         spreadsheetUrl: newSheet.url,
         sheetName: 'Order Fulfillment & Barcode Tracker'
       };
-      localStorage.setItem('order_tracker_sheet_config', JSON.stringify(config));
+      safeStorage.setItem('order_tracker_sheet_config', JSON.stringify(config));
       setIsConfiguringSheet(false);
     } catch (err: any) {
       alert(err.message || 'Could not create spreadsheet in Drive.');
@@ -211,14 +343,29 @@ export default function App() {
         spreadsheetUrl: constructedUrl,
         sheetName: 'Connected Custom Spreadsheet'
       };
-      localStorage.setItem('order_tracker_sheet_config', JSON.stringify(config));
+      safeStorage.setItem('order_tracker_sheet_config', JSON.stringify(config));
       setIsConfiguringSheet(false);
       setSheetIdInput('');
     } catch (err: any) {
-      alert('Error connecting sheet: ' + (err.message || 'Make sure the Spreadsheet ID is correct and you have permission to access it.'));
+      alert('Error connecting sheet: ' + (err.message || 'Make sure the Spreadsheet ID is correct and you have permission to access it.') + '\n\n💡 Troubleshoot Permissions:\n1. Ensure that you checked the permissions boxes for "Google Sheets" and "Google Drive" during screen authorization.\n2. Try to Sign Out using the power icon, then Sign In again to authorize. \n3. Ensure your Google account has access to read and write to this specific Spreadsheet ID.');
     } finally {
       setIsLoadingOrders(false);
     }
+  };
+
+  const isAuthError = (err: any): boolean => {
+    if (!err || !err.message) return false;
+    const msg = err.message.toLowerCase();
+    return (
+      msg.includes('401') ||
+      msg.includes('authenticated') ||
+      msg.includes('authentication') ||
+      msg.includes('credential') ||
+      msg.includes('oauth') ||
+      msg.includes('unauthorized') ||
+      msg.includes('invalid_grant') ||
+      msg.includes('token')
+    );
   };
 
   // Pull orders from sheets
@@ -238,7 +385,7 @@ export default function App() {
       }
     } catch (err: any) {
       console.error('Fetch orders failed', err);
-      if (err.message?.includes('401') || err.message?.includes('authenticated')) {
+      if (isAuthError(err)) {
         // Token might have expired, trigger re-authentication
         setNeedsAuth(true);
       }
@@ -316,6 +463,11 @@ export default function App() {
     assignedTo?: string,
     bu?: string
   ) => {
+    if (activeSystemUser?.role === 'view') {
+      alert("Permission Denied: Viewer accounts are restricted from registering new orders.");
+      return;
+    }
+
     if (!token || !spreadsheetId) return;
 
     // Reject duplicates client side
@@ -372,10 +524,16 @@ export default function App() {
     // Reset indicator messages
     setManualScanMessage(null);
 
-    const order = orders.find(o => o.id === cleaned);
+    const order = orders.find(o => {
+      if (!o || !o.id) return false;
+      const matchId = String(o.id).trim().toUpperCase() === cleaned;
+      const matchPL = o.packingListNo ? String(o.packingListNo).trim().toUpperCase() === cleaned : false;
+      const matchInv = o.invoiceNumber ? String(o.invoiceNumber).trim().toUpperCase() === cleaned : false;
+      return matchId || matchPL || matchInv;
+    });
 
     if (!order) {
-      const errMsg = `Scan Failed: Order ID "${cleaned}" not found. Verify ID or register first.`;
+      const errMsg = `Scan Failed: Code "${cleaned}" did not match any Barcode/SO#, Packing List#, or Invoice#.`;
       setManualScanMessage({ text: errMsg, isError: true });
       addScanReceipt({
         orderId: cleaned,
@@ -387,6 +545,34 @@ export default function App() {
       });
       triggerBeep(false);
       return;
+    }
+
+    // Process access check
+    let requiredProcess: 'picking' | 'checking' | 'delivery' | null = null;
+    if (['REGISTERED', 'PENDING_PICKING', 'PICKING_STARTED'].includes(order.status)) {
+      requiredProcess = 'picking';
+    } else if (['READY_CHECKING', 'CHECKING_STARTED'].includes(order.status)) {
+      requiredProcess = 'checking';
+    } else if (['READY_DELIVERY', 'DELIVERY_STARTED'].includes(order.status)) {
+      requiredProcess = 'delivery';
+    }
+
+    if (requiredProcess && activeSystemUser && activeSystemUser.role !== 'admin') {
+      const allowed = activeSystemUser.allowedProcesses || [];
+      if (!allowed.includes(requiredProcess)) {
+        const errMsg = `Scan Blocked: "${activeSystemUser.username}" is not authorized for the ${requiredProcess} process.`;
+        setManualScanMessage({ text: errMsg, isError: true });
+        addScanReceipt({
+          orderId: order.id,
+          previousStage: order.status,
+          newStage: order.status,
+          timestamp: new Date().toLocaleTimeString(),
+          message: errMsg,
+          success: false
+        });
+        triggerBeep(false);
+        return;
+      }
     }
 
     const timestamp = new Date().toISOString();
@@ -401,6 +587,9 @@ export default function App() {
         nextStage = 'PICKING_STARTED';
         updatedOrder.status = nextStage;
         updatedOrder.pickStart = timestamp;
+        if (activeSystemUser?.username) {
+          updatedOrder.assignedTo = activeSystemUser.username;
+        }
         actionDescr = 'Picked Start (1st scan logged)';
         break;
 
@@ -415,6 +604,9 @@ export default function App() {
         nextStage = 'CHECKING_STARTED';
         updatedOrder.status = nextStage;
         updatedOrder.checkStart = timestamp;
+        if (activeSystemUser?.username) {
+          updatedOrder.assignedTo = activeSystemUser.username;
+        }
         actionDescr = 'Check Start (1st scan logged)';
         break;
 
@@ -429,6 +621,9 @@ export default function App() {
         nextStage = 'DELIVERY_STARTED';
         updatedOrder.status = nextStage;
         updatedOrder.deliveryStart = timestamp;
+        if (activeSystemUser?.username) {
+          updatedOrder.assignedTo = activeSystemUser.username;
+        }
         actionDescr = 'Delivery Dispatch Started (1st scan logged)';
         break;
 
@@ -442,10 +637,10 @@ export default function App() {
       case 'DELIVERED_SUCCESS':
       case 'DELIVERED_INCOMPLETE':
       case 'DELIVERED_RETURN':
-        const completedMsg = `Scan Warning: "${cleaned}" is already completed and reached final destination status.`;
+        const completedMsg = `Scan Warning: "${cleaned}" (SO#: ${order.id}) is already completed and reached final destination status.`;
         setManualScanMessage({ text: completedMsg, isError: true });
         addScanReceipt({
-          orderId: cleaned,
+          orderId: order.id,
           previousStage: order.status,
           newStage: order.status,
           timestamp: new Date().toLocaleTimeString(),
@@ -465,18 +660,18 @@ export default function App() {
       await updateOrderInSheet(token!, spreadsheetId, orders, updatedOrder);
       
       // Update local state to reflect instantly
-      setOrders(prev => prev.map(o => o.id === cleaned ? updatedOrder : o));
-      if (selectedOrder?.id === cleaned) {
+      setOrders(prev => prev.map(o => o.id === order.id ? updatedOrder : o));
+      if (selectedOrder?.id === order.id) {
         setSelectedOrder(updatedOrder);
       }
 
-      setManualScanMessage({ text: `Approved: ${cleaned} moved to ${getStageLabel(nextStage)}`, isError: false });
+      setManualScanMessage({ text: `Approved: Match found (${cleaned}). ${order.id} moved to ${getStageLabel(nextStage)}`, isError: false });
       addScanReceipt({
-        orderId: cleaned,
+        orderId: order.id,
         previousStage: prevStage,
         newStage: nextStage,
         timestamp: new Date().toLocaleTimeString(),
-        message: actionDescr,
+        message: `${actionDescr} (Scanned: ${cleaned})`,
         success: true
       });
       triggerBeep(true);
@@ -484,6 +679,9 @@ export default function App() {
       console.error(err);
       setManualScanMessage({ text: `Save error: ${err.message || 'Connection failed'}`, isError: true });
       triggerBeep(false);
+      if (isAuthError(err)) {
+        setNeedsAuth(true);
+      }
     } finally {
       setIsLoadingOrders(false);
     }
@@ -564,6 +762,9 @@ export default function App() {
       triggerBeep(true);
     } catch (err: any) {
       alert('Failed to save to Google Sheets: ' + (err.message || 'Connection lost'));
+      if (isAuthError(err)) {
+        setNeedsAuth(true);
+      }
     } finally {
       setIsLoadingOrders(false);
       setPendingDeliveryOrderId(null);
@@ -574,23 +775,80 @@ export default function App() {
     switch (status) {
       case 'REGISTERED':
       case 'PENDING_PICKING':
-        return { label: 'Start Picking', color: 'bg-emerald-100 hover:bg-emerald-200 text-emerald-950 border-emerald-300' };
+        return { 
+          label: 'Start Picking', 
+          color: 'bg-emerald-400 hover:bg-emerald-500 text-slate-900 border-slate-900',
+          icon: Play 
+        };
       case 'PICKING_STARTED':
-        return { label: 'Finish Picking', color: 'bg-amber-100 hover:bg-amber-200 text-amber-950 border-amber-300' };
+        return { 
+          label: 'Finish Picking', 
+          color: 'bg-amber-400 hover:bg-amber-500 text-slate-900 border-slate-900',
+          icon: ClipboardCheck 
+        };
       case 'READY_CHECKING':
-        return { label: 'Start Check', color: 'bg-purple-100 hover:bg-purple-200 text-purple-950 border-purple-300' };
+        return { 
+          label: 'Start Check', 
+          color: 'bg-purple-400 hover:bg-purple-500 text-slate-900 border-slate-900',
+          icon: Play 
+        };
       case 'CHECKING_STARTED':
-        return { label: 'Finish Check', color: 'bg-indigo-100 hover:bg-indigo-200 text-indigo-950 border-indigo-300' };
+        return { 
+          label: 'Finish Check', 
+          color: 'bg-indigo-500 hover:bg-indigo-600 text-white border-slate-900',
+          icon: ClipboardCheck 
+        };
       case 'READY_DELIVERY':
-        return { label: 'Start Delivery', color: 'bg-teal-100 hover:bg-teal-200 text-teal-950 border-teal-300' };
+        return { 
+          label: 'Start Delivery', 
+          color: 'bg-teal-400 hover:bg-teal-500 text-slate-900 border-slate-900',
+          icon: Truck 
+        };
       case 'DELIVERY_STARTED':
-        return { label: 'Fulfill', color: 'bg-rose-100 hover:bg-rose-200 text-rose-950 border-rose-300' };
+        return { 
+          label: 'Fulfill Order', 
+          color: 'bg-rose-500 hover:bg-rose-600 text-white border-slate-900',
+          icon: CheckCircle2 
+        };
       default:
         return null;
     }
   };
 
   const handleAdvanceStageClick = async (order: Order, nextStageOverride?: OrderStage) => {
+    if (activeSystemUser?.role === 'view') {
+      alert("Permission Denied: Viewer accounts are restricted from scanning, or advancing tracking stages.");
+      return;
+    }
+
+    // Process authorization check
+    let requiredProcess: 'picking' | 'checking' | 'delivery' | null = null;
+    if (nextStageOverride) {
+      if (['PICKING_STARTED', 'READY_CHECKING'].includes(nextStageOverride)) {
+        requiredProcess = 'picking';
+      } else if (['CHECKING_STARTED', 'READY_DELIVERY'].includes(nextStageOverride)) {
+        requiredProcess = 'checking';
+      } else if (['DELIVERY_STARTED', 'DELIVERED_SUCCESS', 'DELIVERED_INCOMPLETE', 'DELIVERED_RETURN'].includes(nextStageOverride)) {
+        requiredProcess = 'delivery';
+      }
+    } else {
+      if (['REGISTERED', 'PENDING_PICKING', 'PICKING_STARTED'].includes(order.status)) {
+        requiredProcess = 'picking';
+      } else if (['READY_CHECKING', 'CHECKING_STARTED'].includes(order.status)) {
+        requiredProcess = 'checking';
+      } else if (['READY_DELIVERY', 'DELIVERY_STARTED'].includes(order.status)) {
+        requiredProcess = 'delivery';
+      }
+    }
+
+    if (requiredProcess && activeSystemUser && activeSystemUser.role !== 'admin') {
+      const allowed = activeSystemUser.allowedProcesses || [];
+      if (!allowed.includes(requiredProcess)) {
+        alert(`Permission Denied: "${activeSystemUser.username}" is not authorized for the ${requiredProcess} process.`);
+        return;
+      }
+    }
+
     if (!token || !spreadsheetId) return;
 
     setIsLoadingOrders(true);
@@ -611,6 +869,9 @@ export default function App() {
       if (['DELIVERED_SUCCESS', 'DELIVERED_INCOMPLETE', 'DELIVERED_RETURN'].includes(nextStage)) {
         updatedOrder.deliveryEnd = timestamp;
       }
+      if (['PICKING_STARTED', 'CHECKING_STARTED', 'DELIVERY_STARTED'].includes(nextStage) && activeSystemUser?.username) {
+        updatedOrder.assignedTo = activeSystemUser.username;
+      }
       actionDescr = `Manual progression override to ${getStageLabel(nextStage)}`;
     } else {
       switch (order.status) {
@@ -619,6 +880,9 @@ export default function App() {
           nextStage = 'PICKING_STARTED';
           updatedOrder.status = nextStage;
           updatedOrder.pickStart = timestamp;
+          if (activeSystemUser?.username) {
+            updatedOrder.assignedTo = activeSystemUser.username;
+          }
           actionDescr = 'Picked Start (process begun)';
           break;
 
@@ -633,6 +897,9 @@ export default function App() {
           nextStage = 'CHECKING_STARTED';
           updatedOrder.status = nextStage;
           updatedOrder.checkStart = timestamp;
+          if (activeSystemUser?.username) {
+            updatedOrder.assignedTo = activeSystemUser.username;
+          }
           actionDescr = 'Check Start (verification begun)';
           break;
 
@@ -647,6 +914,9 @@ export default function App() {
           nextStage = 'DELIVERY_STARTED';
           updatedOrder.status = nextStage;
           updatedOrder.deliveryStart = timestamp;
+          if (activeSystemUser?.username) {
+            updatedOrder.assignedTo = activeSystemUser.username;
+          }
           actionDescr = 'Delivery Dispatch Started';
           break;
 
@@ -681,6 +951,9 @@ export default function App() {
       triggerBeep(true);
     } catch (err: any) {
       alert('Failed to advance order stage: ' + (err.message || 'Error occurred'));
+      if (isAuthError(err)) {
+        setNeedsAuth(true);
+      }
     } finally {
       setIsLoadingOrders(false);
     }
@@ -717,6 +990,10 @@ export default function App() {
           if (!updatedOrder.deliveryEnd) updatedOrder.deliveryEnd = timestamp;
         }
 
+        if (['PICKING_STARTED', 'CHECKING_STARTED', 'DELIVERY_STARTED'].includes(stage) && activeSystemUser?.username) {
+          updatedOrder.assignedTo = activeSystemUser.username;
+        }
+
         try {
           await updateOrderInSheet(token, spreadsheetId, orders, updatedOrder);
           setOrders(prev => prev.map(o => o.id === selectedOrder.id ? updatedOrder : o));
@@ -732,6 +1009,9 @@ export default function App() {
           });
         } catch (err: any) {
           alert('Failed to override stage in Google Sheets: ' + err.message);
+          if (isAuthError(err)) {
+            setNeedsAuth(true);
+          }
         } finally {
           setIsLoadingOrders(false);
         }
@@ -741,6 +1021,11 @@ export default function App() {
 
   // Update order fields inside Google Sheets and local state
   const handleUpdateOrder = async (originalId: string, updatedOrder: Order) => {
+    if (activeSystemUser?.role === 'view') {
+      alert("Permission Denied: Viewer accounts are restricted from modifying order details.");
+      return;
+    }
+
     if (!token || !spreadsheetId) {
       throw new Error("Authentication or Google Sheets configuration is missing.");
     }
@@ -767,6 +1052,12 @@ export default function App() {
         message: `System: Order master fields (SO#, Customer, PL#, Invoice) edited & synced successfully.`,
         success: true
       });
+    } catch (err: any) {
+      console.error(err);
+      if (isAuthError(err)) {
+        setNeedsAuth(true);
+      }
+      throw err;
     } finally {
       setIsLoadingOrders(false);
     }
@@ -775,6 +1066,11 @@ export default function App() {
   // Remove / delete order row from sheets
   const triggerRemoveOrder = () => {
     if (!selectedOrder) return;
+
+    if (activeSystemUser?.role !== 'admin') {
+      alert("Permission Denied: Your account role does not support deleting tracking records.");
+      return;
+    }
 
     setConfirmDialog({
       isOpen: true,
@@ -820,6 +1116,9 @@ export default function App() {
           await handleRefreshOrders();
         } catch (err: any) {
           alert('Failed to delete order from Google Sheets: ' + err.message);
+          if (isAuthError(err)) {
+            setNeedsAuth(true);
+          }
         } finally {
           setIsLoadingOrders(false);
         }
@@ -830,6 +1129,11 @@ export default function App() {
   // Manual key-in scan submit
   const handleKeyInScanSubmit = (e: FormEvent) => {
     e.preventDefault();
+    if (activeSystemUser?.role === 'view') {
+      alert("Permission Denied: Viewer accounts are restricted from scanning, or advancing tracking stages.");
+      setBarcodeInput('');
+      return;
+    }
     if (!barcodeInput.trim()) return;
     processBarcodeScan(barcodeInput.trim());
     setBarcodeInput('');
@@ -884,16 +1188,36 @@ export default function App() {
     }
   };
 
+  // Filter raw orders down to only those matching allowed processes for non-admins
+  const visibleOrders = useMemo(() => {
+    if (!activeSystemUser || activeSystemUser.role === 'admin') {
+      return orders;
+    }
+    const allowed = activeSystemUser.allowedProcesses || ['picking', 'checking', 'delivery'];
+    return orders.filter(o => {
+      let orderProcess: 'picking' | 'checking' | 'delivery' | null = null;
+      if (['REGISTERED', 'PENDING_PICKING', 'PICKING_STARTED'].includes(o.status)) {
+        orderProcess = 'picking';
+      } else if (['READY_CHECKING', 'CHECKING_STARTED'].includes(o.status)) {
+        orderProcess = 'checking';
+      } else if (['READY_DELIVERY', 'DELIVERY_STARTED', 'DELIVERED_SUCCESS', 'DELIVERED_INCOMPLETE', 'DELIVERED_RETURN'].includes(o.status)) {
+        orderProcess = 'delivery';
+      }
+      return !orderProcess || allowed.includes(orderProcess);
+    });
+  }, [orders, activeSystemUser]);
+
   // Calculations for KPI numbers
-  const totalCount = orders.length;
-  const inRegisteredCount = orders.filter(o => o.status === 'REGISTERED').length;
-  const inPickingCount = orders.filter(o => o.status === 'PENDING_PICKING' || o.status === 'PICKING_STARTED').length;
-  const inCheckingCount = orders.filter(o => o.status === 'READY_CHECKING' || o.status === 'CHECKING_STARTED').length;
-  const inDeliveryCount = orders.filter(o => o.status === 'READY_DELIVERY' || o.status === 'DELIVERY_STARTED').length;
+  const totalCount = visibleOrders.length;
+  const inRegisteredCount = visibleOrders.filter(o => o.status === 'REGISTERED').length;
+  const inPickingCount = visibleOrders.filter(o => o.status === 'PENDING_PICKING' || o.status === 'PICKING_STARTED').length;
+  const inCheckingCount = visibleOrders.filter(o => o.status === 'READY_CHECKING' || o.status === 'CHECKING_STARTED').length;
+  const inWaitingDeliveryCount = visibleOrders.filter(o => o.status === 'READY_DELIVERY').length;
+  const inDeliveryCount = visibleOrders.filter(o => o.status === 'DELIVERY_STARTED').length;
   
-  const successDeliveries = orders.filter(o => o.status === 'DELIVERED_SUCCESS').length;
-  const incompleteDeliveries = orders.filter(o => o.status === 'DELIVERED_INCOMPLETE').length;
-  const returnedDeliveries = orders.filter(o => o.status === 'DELIVERED_RETURN').length;
+  const successDeliveries = visibleOrders.filter(o => o.status === 'DELIVERED_SUCCESS').length;
+  const incompleteDeliveries = visibleOrders.filter(o => o.status === 'DELIVERED_INCOMPLETE').length;
+  const returnedDeliveries = visibleOrders.filter(o => o.status === 'DELIVERED_RETURN').length;
   const totalCompleted = successDeliveries + incompleteDeliveries + returnedDeliveries;
 
   // Render stage icon
@@ -903,66 +1227,206 @@ export default function App() {
   };
 
   // Filter & Search computation
-  const filteredOrders = orders.filter(o => {
+  const filteredOrders = visibleOrders.filter(o => {
     // Stage Filter
     if (activeFilter === 'Registered' && o.status !== 'REGISTERED') return false;
     if (activeFilter === 'Picking' && !(o.status === 'PENDING_PICKING' || o.status === 'PICKING_STARTED')) return false;
     if (activeFilter === 'Checking' && !(o.status === 'READY_CHECKING' || o.status === 'CHECKING_STARTED')) return false;
-    if (activeFilter === 'Delivery' && !(o.status === 'READY_DELIVERY' || o.status === 'DELIVERY_STARTED')) return false;
+    if (activeFilter === 'Waiting Delivery' && o.status !== 'READY_DELIVERY') return false;
+    if (activeFilter === 'Delivery' && o.status !== 'DELIVERY_STARTED') return false;
     if (activeFilter === 'Completed' && !o.status.startsWith('DELIVERED')) return false;
 
     // Search query
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
-      return o.id.toLowerCase().includes(query) || o.items.toLowerCase().includes(query);
+      return String(o.id || '').toLowerCase().includes(query) || String(o.items || '').toLowerCase().includes(query);
     }
     return true;
   });
 
-  const renderKpiSection = () => (
-    <div className="bg-white rounded-3xl border-2 border-slate-900 p-6 flex flex-col justify-between gap-4 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)]">
-      <h4 className="text-[10px] uppercase font-bold tracking-widest text-slate-400 flex items-center gap-1.5">
-        <History className="w-4 h-4 text-slate-500" /> System KPI Indicators
-      </h4>
-      
-      <div className="flex justify-around items-center flex-wrap gap-4 py-2">
-        <div className="text-center px-2">
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total Active</p>
-          <p className="text-3xl font-black font-display text-slate-900">{totalCount}</p>
-        </div>
-        <div className="h-8 w-[1px] bg-slate-200 hidden sm:block"></div>
-        <div className="text-center px-2">
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Registered</p>
-          <p className="text-3xl font-black font-display text-sky-600">{inRegisteredCount}</p>
-        </div>
-        <div className="h-8 w-[1px] bg-slate-200 hidden sm:block"></div>
-        <div className="text-center px-2">
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">In Picking</p>
-          <p className="text-3xl font-black font-display text-blue-600">{inPickingCount}</p>
-        </div>
-        <div className="h-8 w-[1px] bg-slate-200 hidden sm:block"></div>
-        <div className="text-center px-2">
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">In Checking</p>
-          <p className="text-3xl font-black font-display text-amber-500">{inCheckingCount}</p>
-        </div>
-        <div className="h-8 w-[1px] bg-slate-200 hidden sm:block"></div>
-        <div className="text-center px-2 text-emerald-600">
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Completed</p>
-          <p className="text-3xl font-black font-display text-emerald-600">{totalCompleted}</p>
-        </div>
-      </div>
+  const renderKpiSection = () => {
+    const handleKpiClick = (filter: 'All' | 'Registered' | 'Picking' | 'Checking' | 'Waiting Delivery' | 'Delivery' | 'Completed') => {
+      setActiveFilter(filter);
+      setCurrentTab('registry');
+      setScannerActive(false);
+    };
 
-      {totalCompleted > 0 && (
-        <div className="pt-3 border-t border-slate-100">
-          <div className="flex flex-wrap items-center justify-between font-mono p-2.5 bg-slate-50 rounded-xl border-2 border-slate-900 text-[10px] gap-2">
-            <span className="text-emerald-600 font-bold flex items-center gap-1">✔ Success: {successDeliveries}</span>
-            <span className="text-amber-600 font-bold flex items-center gap-1">⚠ Incomplete: {incompleteDeliveries}</span>
-            <span className="text-rose-600 font-bold flex items-center gap-1">↺ Return: {returnedDeliveries}</span>
-          </div>
+    const kpiItems = [
+      {
+        id: 'All' as const,
+        label: 'Total Active',
+        count: totalCount,
+        icon: Layers,
+        activeBg: 'bg-slate-900 border-slate-950 text-white shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] translate-y-[1px]',
+        inactiveBg: 'bg-slate-50 border-slate-200 hover:border-slate-900 hover:bg-white text-slate-800 hover:shadow-[3px_3px_0px_0px_rgba(15,23,42,0.15)]',
+        iconBgActive: 'bg-slate-800 border border-slate-700',
+        iconBgInactive: 'bg-slate-100 border border-slate-200',
+        iconColorActive: 'text-white',
+        iconColorInactive: 'text-slate-500',
+        countColorActive: 'text-white',
+        countColorInactive: 'text-slate-900',
+        labelColorActive: 'text-slate-300',
+        labelColorInactive: 'text-slate-400'
+      },
+      {
+        id: 'Registered' as const,
+        label: 'Registered',
+        count: inRegisteredCount,
+        icon: ClipboardList,
+        activeBg: 'bg-sky-600 border-slate-900 text-white shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] translate-y-[1px]',
+        inactiveBg: 'bg-slate-50 border-slate-200 hover:border-sky-500 hover:bg-sky-50/40 text-slate-800 hover:shadow-[3px_3px_0px_0px_rgba(14,165,233,0.15)]',
+        iconBgActive: 'bg-sky-700 border border-sky-500',
+        iconBgInactive: 'bg-sky-100 border border-sky-200',
+        iconColorActive: 'text-white',
+        iconColorInactive: 'text-sky-600',
+        countColorActive: 'text-white',
+        countColorInactive: 'text-sky-700',
+        labelColorActive: 'text-sky-100',
+        labelColorInactive: 'text-slate-400'
+      },
+      {
+        id: 'Picking' as const,
+        label: 'In Picking',
+        count: inPickingCount,
+        icon: Package,
+        activeBg: 'bg-blue-600 border-slate-900 text-white shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] translate-y-[1px]',
+        inactiveBg: 'bg-slate-50 border-slate-200 hover:border-blue-500 hover:bg-blue-50/40 text-slate-800 hover:shadow-[3px_3px_0px_0px_rgba(37,99,235,0.15)]',
+        iconBgActive: 'bg-blue-700 border border-blue-500',
+        iconBgInactive: 'bg-blue-50 border border-blue-100',
+        iconColorActive: 'text-white',
+        iconColorInactive: 'text-blue-600',
+        countColorActive: 'text-white',
+        countColorInactive: 'text-blue-700',
+        labelColorActive: 'text-blue-100',
+        labelColorInactive: 'text-slate-400'
+      },
+      {
+        id: 'Checking' as const,
+        label: 'In Checking',
+        count: inCheckingCount,
+        icon: ClipboardCheck,
+        activeBg: 'bg-amber-500 border-slate-900 text-white shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] translate-y-[1px]',
+        inactiveBg: 'bg-slate-50 border-slate-200 hover:border-amber-500 hover:bg-amber-50/40 text-slate-800 hover:shadow-[3px_3px_0px_0px_rgba(245,158,11,0.15)]',
+        iconBgActive: 'bg-amber-600 border border-amber-400',
+        iconBgInactive: 'bg-amber-50 border border-amber-100',
+        iconColorActive: 'text-white',
+        iconColorInactive: 'text-amber-600',
+        countColorActive: 'text-white',
+        countColorInactive: 'text-amber-600',
+        labelColorActive: 'text-amber-100',
+        labelColorInactive: 'text-slate-400'
+      },
+      {
+        id: 'Waiting Delivery' as const,
+        label: 'Waiting Delivery',
+        count: inWaitingDeliveryCount,
+        icon: Clock,
+        activeBg: 'bg-indigo-600 border-slate-900 text-white shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] translate-y-[1px]',
+        inactiveBg: 'bg-slate-50 border-slate-200 hover:border-indigo-500 hover:bg-indigo-50/40 text-slate-800 hover:shadow-[3px_3px_0px_0px_rgba(99,102,241,0.15)]',
+        iconBgActive: 'bg-indigo-700 border border-indigo-500',
+        iconBgInactive: 'bg-indigo-50 border border-indigo-100',
+        iconColorActive: 'text-white',
+        iconColorInactive: 'text-indigo-600',
+        countColorActive: 'text-white',
+        countColorInactive: 'text-indigo-700',
+        labelColorActive: 'text-indigo-100',
+        labelColorInactive: 'text-slate-400'
+      },
+      {
+        id: 'Delivery' as const,
+        label: 'Delivering',
+        count: inDeliveryCount,
+        icon: Truck,
+        activeBg: 'bg-teal-600 border-slate-900 text-white shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] translate-y-[1px]',
+        inactiveBg: 'bg-slate-50 border-slate-200 hover:border-teal-500 hover:bg-teal-50/40 text-slate-800 hover:shadow-[3px_3px_0px_0px_rgba(20,184,166,0.15)]',
+        iconBgActive: 'bg-teal-700 border border-teal-500',
+        iconBgInactive: 'bg-teal-50 border border-teal-100',
+        iconColorActive: 'text-white',
+        iconColorInactive: 'text-teal-600',
+        countColorActive: 'text-white',
+        countColorInactive: 'text-teal-700',
+        labelColorActive: 'text-teal-100',
+        labelColorInactive: 'text-slate-400'
+      },
+      {
+        id: 'Completed' as const,
+        label: 'Completed',
+        count: totalCompleted,
+        icon: CheckCircle2,
+        activeBg: 'bg-emerald-600 border-slate-900 text-white shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] translate-y-[1px]',
+        inactiveBg: 'bg-slate-50 border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/40 text-slate-800 hover:shadow-[3px_3px_0px_0px_rgba(16,185,129,0.15)]',
+        iconBgActive: 'bg-emerald-700 border border-emerald-500',
+        iconBgInactive: 'bg-emerald-50 border border-emerald-100',
+        iconColorActive: 'text-white',
+        iconColorInactive: 'text-emerald-600',
+        countColorActive: 'text-white',
+        countColorInactive: 'text-emerald-700',
+        labelColorActive: 'text-emerald-100',
+        labelColorInactive: 'text-slate-400'
+      }
+    ];
+
+    return (
+      <div className="bg-white rounded-3xl border-2 border-slate-900 p-5 flex flex-col justify-between gap-4 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)]">
+        <div className="flex items-center justify-between">
+          <h4 className="text-[10px] uppercase font-bold tracking-widest text-slate-400 flex items-center gap-1.5">
+            <History className="w-4 h-4 text-slate-500" /> System KPI Indicators
+          </h4>
+          <span className="text-[9px] font-bold text-slate-400 font-mono bg-slate-150 px-2 py-0.5 rounded-full">Click card to view process</span>
         </div>
-      )}
-    </div>
-  );
+        
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 gap-3.5 py-1">
+          {kpiItems.filter(item => isFilterTabAllowed(item.id)).map((item) => {
+            const isActive = activeFilter === item.id && currentTab === 'registry';
+            const IconComponent = item.icon;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => handleKpiClick(item.id)}
+                className={`flex flex-col justify-between p-3 rounded-2xl border-2 transition-all cursor-pointer select-none active:scale-[0.98] w-full text-left relative overflow-hidden group ${
+                  isActive ? item.activeBg : item.inactiveBg
+                }`}
+              >
+                {/* Upper line: Icon & Count */}
+                <div className="flex items-center justify-between w-full gap-2 mb-2">
+                  <div className={`p-1.5 rounded-xl transition-colors shrink-0 ${
+                    isActive ? item.iconBgActive : item.iconBgInactive
+                  }`}>
+                    <IconComponent className={`w-3.5 h-3.5 transition-transform group-hover:scale-110 duration-200 ${
+                      isActive ? item.iconColorActive : item.iconColorInactive
+                    }`} />
+                  </div>
+                  <span className={`text-2xl sm:text-3xl font-black font-display tracking-tight leading-none ${
+                    isActive ? item.countColorActive : item.countColorInactive
+                  }`}>
+                    {item.count}
+                  </span>
+                </div>
+
+                {/* Label text */}
+                <span className={`text-[10px] font-black uppercase tracking-wider block truncate mt-0.5 ${
+                  isActive ? item.labelColorActive : item.labelColorInactive
+                }`}>
+                  {item.label}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {totalCompleted > 0 && (
+          <div className="pt-3 border-t border-slate-100">
+            <div className="flex flex-wrap items-center justify-between font-mono p-2.5 bg-slate-50 rounded-xl border-2 border-slate-900 text-[10px] gap-2">
+              <span className="text-emerald-600 font-bold flex items-center gap-1">✔ Success: {successDeliveries}</span>
+              <span className="text-amber-600 font-bold flex items-center gap-1">⚠ Incomplete: {incompleteDeliveries}</span>
+              <span className="text-rose-600 font-bold flex items-center gap-1">↺ Return: {returnedDeliveries}</span>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const renderLiveLogsSection = () => (
     <div className="bg-slate-50 border-2 border-slate-900 rounded-3xl p-6 flex flex-col justify-between shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] min-h-[300px]">
@@ -1002,27 +1466,512 @@ export default function App() {
     </div>
   );
 
+  const renderOrderTrackerView = () => {
+    const cleanSearch = trackingOrderId ? String(trackingOrderId).trim().toUpperCase() : '';
+    const matched = orders.find(o => {
+      if (!o || !o.id) return false;
+      const matchId = String(o.id).trim().toUpperCase() === cleanSearch;
+      const matchPL = o.packingListNo ? String(o.packingListNo).trim().toUpperCase() === cleanSearch : false;
+      const matchInv = o.invoiceNumber ? String(o.invoiceNumber).trim().toUpperCase() === cleanSearch : false;
+      return matchId || matchPL || matchInv;
+    });
+    
+    // Support typing a search in the tracker if nothing found or search input is focused
+
+    const handleLocalSearchSubmit = (e: FormEvent) => {
+      e.preventDefault();
+      if (localSearch.trim()) {
+        setTrackingOrderId(localSearch.trim());
+        // update URL parameter so user can bookmark / share it
+        const newUrl = new URL(window.location.href);
+        newUrl.searchParams.set('track', localSearch.trim());
+        window.history.pushState(null, '', newUrl.toString());
+      }
+    };
+
+    const handleClearTracking = () => {
+      setTrackingOrderId(null);
+      setLocalSearch('');
+      // clean url query params
+      const newUrl = new URL(window.location.href);
+      newUrl.searchParams.delete('track');
+      newUrl.searchParams.delete('so');
+      window.history.pushState(null, '', newUrl.pathname);
+    };
+
+    // Tracking URL to display / copy / embed in QR code
+    const trackingUrl = matched ? `${window.location.origin}${window.location.pathname}?track=${encodeURIComponent(matched.id)}` : '';
+
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
+        {/* Simple tracker header */}
+        <header className="bg-white border-b-2 border-slate-900 px-4 py-3 sm:px-6 sm:py-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="bg-slate-900 text-white p-2 rounded-xl border border-slate-950 shrink-0">
+              <Barcode className="w-5.5 h-5.5 sm:w-6 sm:h-6 stroke-[1.75]" />
+            </div>
+            <div>
+              <h1 className="font-display font-black text-slate-900 text-lg uppercase tracking-tight leading-none flex items-center gap-1.5 flex-wrap">
+                ScanFlow <span className="font-normal text-[9px] text-emerald-600 font-extrabold uppercase shrink-0 py-0.5 px-2 bg-emerald-50 border border-emerald-250 rounded">Live Tracker</span>
+              </h1>
+              <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-0.5 sm:mt-1">
+                Fulfillment Logistics Terminal
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={handleClearTracking}
+            className="w-full sm:w-auto bg-slate-900 hover:bg-slate-800 text-white border-2 border-slate-950 text-xs font-black uppercase tracking-wider py-2.5 px-4 rounded-xl shadow-[3px_3px_0px_0px_rgba(30,41,59,0.3)] transition-all hover:translate-y-[-1px] active:translate-y-[1px] cursor-pointer"
+          >
+            Go to Operator Dashboard
+          </button>
+        </header>
+
+        <main className="flex-1 max-w-5xl w-full mx-auto p-4 sm:p-6 space-y-6">
+          {/* Tracking Search Input */}
+          <div className="bg-white rounded-2xl border-2 border-slate-900 p-4 sm:p-5 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div>
+              <h3 className="font-display font-black uppercase text-slate-900 text-base sm:text-md">Track Another Sales Order</h3>
+              <p className="text-xs text-slate-400">Scan code label or input your Sales Order reference identifier below.</p>
+            </div>
+            <form onSubmit={handleLocalSearchSubmit} className="flex items-center gap-2 w-full sm:w-auto">
+              <input
+                type="text"
+                placeholder="e.g. ORD-1001"
+                value={localSearch}
+                onChange={e => setLocalSearch(e.target.value)}
+                className="font-mono font-bold text-sm text-slate-900 px-4 py-2 border-2 border-slate-900 rounded-xl outline-none focus:ring-2 focus:ring-slate-900/10 flex-1 sm:w-48 placeholder:text-slate-300 bg-slate-50 focus:bg-white transition-all"
+              />
+              <button
+                type="submit"
+                className="bg-slate-900 hover:bg-slate-800 text-white border-2 border-slate-900 px-4 py-2.5 text-xs font-black uppercase tracking-wider rounded-xl shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all active:translate-y-[1px] cursor-pointer"
+              >
+                Track
+              </button>
+            </form>
+          </div>
+
+          {!matched ? (
+            <div className="bg-amber-50 border-2 border-amber-900 rounded-3xl p-8 text-center space-y-4 shadow-[4px_4px_0px_0px_rgba(217,119,6,0.1)]">
+              <AlertTriangle className="w-12 h-12 text-amber-600 mx-auto" />
+              <div>
+                <h4 className="font-display font-black text-amber-955 text-lg uppercase tracking-wider">Order Reference "{trackingOrderId}" Not Available offline</h4>
+                <p className="text-xs text-amber-800 max-w-md mx-auto mt-2">
+                  This order isn't synchronized yet on this device. The operators must connect to the live active sheet and fetch references to populate the live tracking registry snapshots.
+                </p>
+              </div>
+              <div className="flex justify-center gap-3 pt-2">
+                <button
+                  onClick={handleClearTracking}
+                  className="bg-slate-900 hover:bg-slate-800 text-white border-2 border-slate-950 font-bold text-xs uppercase px-5 py-2.5 rounded-xl shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] cursor-pointer"
+                >
+                  Access Terminal Dashboard
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-6 animate-in fade-in duration-300">
+              {/* The Combined Order Tracking & Specifications Card */}
+              <div className="bg-white rounded-3xl border-2 border-slate-900 p-6 sm:p-8 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] space-y-6">
+                {/* Masthead Header / Badge Bar */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b pb-6 border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <span className="font-sans font-black text-emerald-700 bg-emerald-50 border border-emerald-250 px-2.5 py-1 rounded-md text-[10px] uppercase tracking-wider animate-pulse flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block animate-ping" />
+                      Live Tracking Status
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider font-sans bg-slate-50 border border-slate-200 px-2 py-1 rounded-md">
+                      ID: {matched.id}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">
+                      Current Stage:
+                    </span>
+                    <span className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] ${getStageBadgeColor(matched.status)}`}>
+                      {getStageLabel(matched.status)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Main Content: Specs Left, QR Code Right */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                  {/* Left Column: Order details & specifications */}
+                  <div className="lg:col-span-2 space-y-6">
+                    <div>
+                      <h2 className="font-sans font-black text-slate-900 text-2xl sm:text-3xl tracking-tight">
+                        Tracking Order: <span className="text-indigo-600 font-mono select-all font-black">{matched.id}</span>
+                      </h2>
+                      <div className="text-[11px] text-slate-500 font-bold uppercase tracking-widest mt-1.5 flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-slate-400" />
+                        <span>Last update timestamp: </span>
+                        <span className="text-slate-850 font-mono">{(() => {
+                          try {
+                            const d = new Date(matched.lastUpdated);
+                            return isNaN(d.getTime()) ? matched.lastUpdated : d.toLocaleString();
+                          } catch (e) {
+                            return matched.lastUpdated;
+                          }
+                        })()}</span>
+                      </div>
+                    </div>
+
+                    {/* Grid representing all Order specifications */}
+                    <div className="space-y-4">
+                      <h4 className="font-sans font-black text-xs uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                        <Package className="w-4 h-4 text-slate-500" />
+                        Order Specifications Details
+                      </h4>
+                      
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {matched.customerName && (
+                          <div className="col-span-1 sm:col-span-2 bg-slate-50 border-2 border-slate-900/10 p-4 rounded-2xl">
+                            <span className="text-[10px] uppercase font-black text-slate-400 tracking-wider">Customer Name</span>
+                            <p className="font-black text-slate-900 text-lg mt-1">{matched.customerName}</p>
+                          </div>
+                        )}
+
+                        {matched.packingListNo && (
+                          <div className="bg-slate-50/50 border border-slate-200 p-3.5 rounded-xl">
+                            <span className="text-[10px] uppercase font-black text-slate-400 tracking-wider flex items-center gap-1">
+                              <FileText className="w-3.5 h-3.5 text-slate-450" /> Packing List # (PL)
+                            </span>
+                            <p className="font-mono font-bold text-slate-800 text-sm mt-1">{matched.packingListNo}</p>
+                          </div>
+                        )}
+
+                        {matched.invoiceNumber && (
+                          <div className="bg-slate-50/50 border border-slate-200 p-3.5 rounded-xl">
+                            <span className="text-[10px] uppercase font-black text-slate-400 tracking-wider flex items-center gap-1">
+                              <FileText className="w-3.5 h-3.5 text-slate-450" /> Invoice Number
+                            </span>
+                            <p className="font-mono font-bold text-slate-800 text-sm mt-1">{matched.invoiceNumber}</p>
+                          </div>
+                        )}
+
+                        {matched.totalPackage ? (
+                          <div className="bg-slate-50/50 border border-slate-200 p-3.5 rounded-xl">
+                            <span className="text-[10px] uppercase font-black text-slate-400 tracking-wider flex items-center gap-1">
+                              <Package className="w-3.5 h-3.5 text-slate-450" /> Total Package Count
+                            </span>
+                            <p className="font-sans font-bold text-slate-900 text-sm mt-1">{matched.totalPackage} Package(s)</p>
+                          </div>
+                        ) : null}
+
+                        {matched.bu && (
+                          <div className="bg-slate-50/50 border border-slate-200 p-3.5 rounded-xl">
+                            <span className="text-[10px] uppercase font-black text-slate-400 tracking-wider">Business Unit (BU)</span>
+                            <p className="font-sans font-bold text-slate-900 text-sm mt-1">{matched.bu}</p>
+                          </div>
+                        )}
+
+                        {matched.khanDistrict && (
+                          <div className="bg-slate-50/50 border border-slate-200 p-3.5 rounded-xl">
+                            <span className="text-[10px] uppercase font-black text-slate-400 tracking-wider flex items-center gap-1">
+                              <MapPin className="w-3.5 h-3.5 text-slate-450" /> Khan / District
+                            </span>
+                            <p className="font-sans font-bold text-slate-900 text-sm mt-1">{matched.khanDistrict}</p>
+                          </div>
+                        )}
+
+                        {matched.cityProvince && (
+                          <div className="bg-slate-50/50 border border-slate-200 p-3.5 rounded-xl">
+                            <span className="text-[10px] uppercase font-black text-slate-400 tracking-wider flex items-center gap-1">
+                              <MapPin className="w-3.5 h-3.5 text-slate-450" /> City / Province
+                            </span>
+                            <p className="font-sans font-bold text-slate-900 text-sm mt-1">{matched.cityProvince}</p>
+                          </div>
+                        )}
+
+                        {matched.assignedTo && (
+                          <div className="col-span-1 sm:col-span-2 bg-indigo-50/30 border border-indigo-100 p-3.5 rounded-xl flex items-center justify-between gap-4">
+                            <div>
+                              <span className="text-[10px] uppercase font-black text-indigo-500 tracking-wider flex items-center gap-1">
+                                <UserCheck className="w-3.5 h-3.5 text-indigo-400" /> Assigned Operator
+                              </span>
+                              <p className="font-black text-indigo-950 text-sm mt-1">{matched.assignedTo}</p>
+                            </div>
+                            <div className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center border-2 border-indigo-200 shrink-0">
+                              <UserCheck className="w-4 h-4 text-indigo-700" />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right Column: QR Code, share Link, print actions */}
+                  <div className="flex flex-col justify-center">
+                    <div className="bg-slate-50 border-2 border-slate-900 p-5 rounded-2xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex flex-col items-center text-center space-y-4">
+                      <div className="bg-white border-2 border-slate-200 p-3.5 rounded-2xl shadow-sm">
+                        <QRCodeSVG value={trackingUrl} size={110} level="M" />
+                      </div>
+                      
+                      <div className="w-full space-y-1">
+                        <p className="text-[10px] uppercase font-black text-slate-500 tracking-wider">Scan to Load Tracker</p>
+                        <p className="font-mono text-[9.5px] text-slate-600 select-all font-semibold break-all px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg max-w-full truncate">{trackingUrl}</p>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2.5 w-full">
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(trackingUrl);
+                            setCopiedId(matched.id);
+                            setTimeout(() => setCopiedId(null), 2000);
+                          }}
+                          className="bg-slate-900 hover:bg-slate-800 text-white border-2 border-slate-900 py-2.5 px-3 rounded-xl text-[10px] uppercase font-black tracking-wide shadow-[2px_2px_0px_0px_rgba(0,0,0,0.15)] transition-all cursor-pointer active:translate-y-[1px]"
+                        >
+                          {copiedId === matched.id ? 'Copied Link!' : 'Copy Link'}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setQrModalOrder(matched);
+                            setTimeout(() => window.print(), 200);
+                          }}
+                          className="bg-white border-2 border-slate-900 text-slate-900 hover:bg-slate-50 py-2.5 px-3 rounded-xl text-[10px] uppercase font-black tracking-wide shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all cursor-pointer active:translate-y-[1px]"
+                        >
+                          Print Tag
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Event Scope Terminal Timeline */}
+              <div className="bg-white rounded-3xl border-2 border-slate-900 p-6 sm:p-8 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] space-y-6">
+                <div className="flex items-center gap-2.5 border-b pb-4 border-slate-100">
+                  <div className="bg-indigo-50 text-indigo-700 p-2 rounded-xl border border-indigo-250">
+                    <History className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-display font-black text-slate-900 text-sm sm:text-md uppercase tracking-wider">
+                      Recorded Terminal Event Scope
+                    </h3>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">
+                      Full Custody Log & Progression Timestamps
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-6 relative">
+                  {/* Step 1: Registered */}
+                  <div className="relative border-l-2 md:border-l-0 md:border-t-2 border-slate-200 pl-6 md:pl-0 pt-0 md:pt-6 space-y-2">
+                    {/* Circle Node indicator */}
+                    <div className="absolute -left-[9px] md:left-0 -top-1 md:-top-[9px] w-4 h-4 rounded-full bg-emerald-500 border-2 border-white shadow-[0_0_0_4px_rgba(16,185,129,0.15)] flex items-center justify-center animate-pulse" />
+                    
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        Completed
+                      </span>
+                      <span className="text-[10px] uppercase font-extrabold text-slate-400 font-sans">Step 1</span>
+                    </div>
+                    <h4 className="font-sans font-black text-slate-900 text-sm uppercase tracking-tight">1. Order Created</h4>
+                    <p className="text-[11px] font-mono font-semibold text-slate-600 bg-slate-50 border border-slate-150 px-2.5 py-1.5 rounded-lg inline-block">
+                      {matched.lastUpdated ? new Date(matched.lastUpdated).toLocaleString() : 'Registered'}
+                    </p>
+                  </div>
+
+                  {/* Step 2: Picking */}
+                  <div className="relative border-l-2 md:border-l-0 md:border-t-2 border-slate-200 pl-6 md:pl-0 pt-0 md:pt-6 space-y-2">
+                    {/* Circle Node indicator */}
+                    <div className={`absolute -left-[9px] md:left-0 -top-1 md:-top-[9px] w-4 h-4 rounded-full border-2 border-white ${
+                      matched.pickEnd 
+                        ? 'bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.15)]' 
+                        : matched.pickStart 
+                          ? 'bg-amber-500 shadow-[0_0_0_4px_rgba(245,158,11,0.15)] animate-pulse' 
+                          : 'bg-slate-250 shadow-none'
+                    }`} />
+                    
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className={`text-[9px] uppercase font-black px-1.5 py-0.5 rounded border ${
+                        matched.pickEnd 
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                          : matched.pickStart 
+                            ? 'bg-amber-50 text-amber-700 border-amber-250' 
+                            : 'bg-slate-100 text-slate-400 border-slate-200'
+                      }`}>
+                        {matched.pickEnd ? 'Completed' : matched.pickStart ? 'In Progress' : 'Awaiting'}
+                      </span>
+                      <span className="text-[10px] uppercase font-extrabold text-slate-400 font-sans">Step 2</span>
+                    </div>
+                    <h4 className="font-sans font-black text-slate-900 text-sm uppercase tracking-tight">2. Picking Actions</h4>
+                    {matched.pickStart ? (
+                      <div className="space-y-1 bg-slate-50 border border-slate-150 p-2.5 rounded-xl text-[10px] font-mono text-slate-650">
+                        {matched.pickEnd ? (
+                          <p>End: <span className="text-emerald-700 font-bold">{new Date(matched.pickEnd).toLocaleString()}</span></p>
+                        ) : (
+                          <p className="text-amber-600 italic font-sans font-bold animate-pulse">Picking active...</p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-[10px] text-slate-400 italic">No picking records available</p>
+                    )}
+                  </div>
+
+                  {/* Step 3: Checking */}
+                  <div className="relative border-l-2 md:border-l-0 md:border-t-2 border-slate-200 pl-6 md:pl-0 pt-0 md:pt-6 space-y-2">
+                    {/* Circle Node indicator */}
+                    <div className={`absolute -left-[9px] md:left-0 -top-1 md:-top-[9px] w-4 h-4 rounded-full border-2 border-white ${
+                      matched.checkEnd 
+                        ? 'bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.15)]' 
+                        : matched.checkStart 
+                          ? 'bg-purple-500 shadow-[0_0_0_4px_rgba(168,85,247,0.15)] animate-pulse' 
+                          : 'bg-slate-250 shadow-none'
+                    }`} />
+                    
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className={`text-[9px] uppercase font-black px-1.5 py-0.5 rounded border ${
+                        matched.checkEnd 
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                          : matched.checkStart 
+                            ? 'bg-purple-50 text-purple-700 border-purple-250' 
+                            : 'bg-slate-100 text-slate-400 border-slate-200'
+                      }`}>
+                        {matched.checkEnd ? 'Completed' : matched.checkStart ? 'In Progress' : 'Awaiting'}
+                      </span>
+                      <span className="text-[10px] uppercase font-extrabold text-slate-400 font-sans">Step 3</span>
+                    </div>
+                    <h4 className="font-sans font-black text-slate-900 text-sm uppercase tracking-tight">3. Checking Actions</h4>
+                    {matched.checkStart ? (
+                      <div className="space-y-1 bg-slate-50 border border-slate-150 p-2.5 rounded-xl text-[10px] font-mono text-slate-650">
+                        {matched.checkEnd ? (
+                          <p>End: <span className="text-emerald-700 font-bold">{new Date(matched.checkEnd).toLocaleString()}</span></p>
+                        ) : (
+                          <p className="text-purple-600 italic font-sans font-bold animate-pulse">Checking active...</p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-[10px] text-slate-400 italic">No checking records available</p>
+                    )}
+                  </div>
+
+                  {/* Step 4: Delivery */}
+                  <div className="relative border-l-2 md:border-l-0 md:border-t-2 border-slate-200 pl-6 md:pl-0 pt-0 md:pt-6 space-y-2">
+                    {/* Circle Node indicator */}
+                    <div className={`absolute -left-[9px] md:left-0 -top-1 md:-top-[9px] w-4 h-4 rounded-full border-2 border-white ${
+                      matched.deliveryEnd 
+                        ? 'bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.15)]' 
+                        : matched.deliveryStart 
+                          ? 'bg-indigo-500 shadow-[0_0_0_4px_rgba(99,102,241,0.15)] animate-pulse' 
+                          : 'bg-slate-250 shadow-none'
+                    }`} />
+                    
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className={`text-[9px] uppercase font-black px-1.5 py-0.5 rounded border ${
+                        matched.deliveryEnd 
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                          : matched.deliveryStart 
+                            ? 'bg-indigo-50 text-indigo-700 border-indigo-250' 
+                            : 'bg-slate-100 text-slate-400 border-slate-200'
+                      }`}>
+                        {matched.deliveryEnd ? 'Delivered' : matched.deliveryStart ? 'Dispatched' : 'Awaiting'}
+                      </span>
+                      <span className="text-[10px] uppercase font-extrabold text-slate-400 font-sans">Step 4</span>
+                    </div>
+                    <h4 className="font-sans font-black text-slate-900 text-sm uppercase tracking-tight">4. Dispatch & Delivery</h4>
+                    {matched.deliveryStart ? (
+                      <div className="space-y-1 bg-slate-50 border border-slate-150 p-2.5 rounded-xl text-[10px] font-mono text-slate-650">
+                        {matched.deliveryEnd ? (
+                          <p>Finished: <span className="text-emerald-700 font-bold">{new Date(matched.deliveryEnd).toLocaleString()}</span></p>
+                        ) : (
+                          <p className="text-indigo-600 italic font-sans font-bold animate-pulse">Out for delivery...</p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-[10px] text-slate-400 italic">No delivery records available</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
+    );
+  };
+
+  const handleSystemLoginSuccess = (usr: UserCredentials) => {
+    setActiveSystemUser(usr);
+    safeStorage.setItem('scanflow_active_system_user', JSON.stringify(usr));
+  };
+
+  const handleSystemLogout = () => {
+    setActiveSystemUser(null);
+    safeStorage.removeItem('scanflow_active_system_user');
+    setCurrentTab('registry');
+  };
+
+  if (trackingOrderId) {
+    return renderOrderTrackerView();
+  }
+
+  if (!activeSystemUser) {
+    return <LoginScreen onLoginSuccess={handleSystemLoginSuccess} />;
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-[#F8FAFC] relative selection:bg-slate-900/10 text-slate-900 font-sans">
       
       {/* Top Bento Professional App Header */}
-      <header className="sticky top-0 bg-white border-b-2 border-slate-900 px-6 py-4 flex items-center justify-between z-40 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="bg-slate-900 text-white p-2.5 rounded-xl border border-slate-950">
-            <Barcode className="w-6 h-6 stroke-[1.75]" />
+      <header className="sticky top-0 bg-white border-b-2 border-slate-900 px-4 py-3 sm:px-6 sm:py-4 flex flex-col md:flex-row md:items-center justify-between gap-3 z-40 shadow-sm">
+        <div className="flex items-center gap-2.5 w-full md:w-auto justify-between md:justify-start">
+          <div className="flex items-center gap-2.5">
+            <div className="bg-slate-900 text-white p-2 rounded-xl border border-slate-950 shrink-0">
+              <Barcode className="w-5.5 h-5.5 sm:w-6 sm:h-6 stroke-[1.75]" />
+            </div>
+            <div>
+              <h1 className="font-display font-black text-slate-900 text-xl sm:text-2xl uppercase tracking-tight leading-none">
+                ScanFlow <span className="font-normal text-slate-400 text-xs sm:text-base">v2.4</span>
+              </h1>
+              <p className="text-[9px] sm:text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5 sm:mt-1">
+                Fulfillment Terminal
+              </p>
+            </div>
           </div>
-          <div>
-            <h1 className="font-display font-black text-slate-900 text-2xl uppercase tracking-tight leading-none">
-              ScanFlow <span className="font-normal text-slate-400">v2.4</span>
-            </h1>
-            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">
-              Fulfillment Terminal
-            </p>
+          
+          <div className="flex md:hidden items-center gap-1.5">
+            {!needsAuth && user && (
+              <span className="text-[10px] text-emerald-600 font-black flex items-center gap-1 uppercase tracking-wider bg-emerald-50 border border-emerald-250 px-2 py-0.5 rounded-md">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Active
+              </span>
+            )}
           </div>
         </div>
 
         {/* User state / Google Sheets connection state controls */}
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-2 md:gap-4 justify-center md:justify-end w-full md:w-auto border-t md:border-t-0 border-slate-100 pt-2.5 md:pt-0">
+          
+          {/* Active System Account Badge */}
+          {activeSystemUser && (
+            <div id="active-system-user-badge" className="flex items-center gap-1.5 border-2 border-slate-900 bg-slate-50 px-2.5 py-1.5 rounded-xl shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] text-[11px] sm:text-xs shrink-0 select-none">
+              <div className="flex flex-col text-left">
+                <span className="text-[8px] text-slate-400 font-extrabold uppercase tracking-wider leading-none">Session Profile</span>
+                <span className="text-xs font-black text-slate-900 font-mono flex items-center gap-1.5 mt-0.5">
+                  {activeSystemUser.username}
+                  <span className={`text-[7px] px-1 py-0.2 uppercase font-mono rounded font-black border border-slate-950 text-center select-none leading-none ${
+                    activeSystemUser.role === 'admin' 
+                      ? 'bg-red-500 text-white' 
+                      : activeSystemUser.role === 'limited' 
+                      ? 'bg-amber-400 text-slate-950' 
+                      : 'bg-blue-500 text-white'
+                  }`}>
+                    {activeSystemUser.role}
+                  </span>
+                </span>
+              </div>
+              <div className="h-6 w-[1px] bg-slate-300 mx-1 shrink-0"></div>
+              <button
+                type="button"
+                onClick={handleSystemLogout}
+                className="text-[9px] font-black uppercase tracking-wider text-rose-600 hover:text-white hover:bg-rose-500 border border-transparent hover:border-slate-900 px-2 py-1 rounded-lg transition-all cursor-pointer"
+                title="Disconnect system username session"
+              >
+                Signout
+              </button>
+            </div>
+          )}
+
           <div className="hidden lg:flex items-center gap-6">
             <div className="text-right">
               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">System Status</p>
@@ -1056,7 +2005,7 @@ export default function App() {
               </div>
             </button>
           ) : (
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-center">
               {/* Sheets connection status widget */}
               <div className="hidden md:flex flex-col text-right">
                 <span className="text-xs font-bold text-slate-800 max-w-[200px] truncate">
@@ -1068,23 +2017,23 @@ export default function App() {
               </div>
 
               {spreadsheetId ? (
-                <div className="flex items-center gap-1.5 bg-slate-50 border-2 border-slate-900 py-1.5 px-3 rounded-xl shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
-                  <Database className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span className="text-xs font-bold text-slate-700 truncate max-w-[150px]">
+                <div className="flex items-center gap-1.5 bg-slate-50 border-2 border-slate-900 py-1.5 px-2.5 sm:px-3 rounded-xl shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] max-w-full">
+                  <Database className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600 shrink-0" />
+                  <span className="text-xs font-bold text-slate-700 truncate max-w-[70px] sm:max-w-[150px]">
                     {spreadsheetName}
                   </span>
                   <a
                     href={spreadsheetUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="text-slate-400 hover:text-slate-950 transition-colors p-0.5 ml-1"
+                    className="text-slate-400 hover:text-slate-950 transition-colors p-0.5 ml-0.5"
                     title="Open sheet in new window"
                   >
-                    <ExternalLink className="w-3.5 h-3.5 text-slate-900" />
+                    <ExternalLink className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-900" />
                   </a>
                   <button
                     onClick={() => setIsConfiguringSheet(true)}
-                    className="text-[10px] font-bold text-slate-900 hover:text-slate-500 ml-1.5 underline-offset-2 hover:underline uppercase tracking-wider"
+                    className="text-[9px] sm:text-[10px] font-bold text-slate-900 hover:text-slate-500 ml-1 underline-offset-2 hover:underline uppercase tracking-wider shrink-0"
                   >
                     Change
                   </button>
@@ -1163,6 +2112,9 @@ export default function App() {
                     >
                       Connect File
                     </button>
+                    <p className="text-[10px] text-slate-500 mt-2 leading-relaxed leading-normal bg-amber-50 p-2 rounded border border-amber-200">
+                      💡 <strong>Permissions Hint:</strong> If you get a "permission" / "caller does not have permission" error, it means the Google Sheets checkbox wasn't enabled. To fix, click the Power icon (top-right) to Sign Out, and sign back in while <strong>checking the permission boxes</strong>.
+                    </p>
                   </form>
                 </div>
               </div>
@@ -1172,66 +2124,137 @@ export default function App() {
       )}
 
       {/* Main Container Content */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
 
         {/* Tab Selection Row */}
         {token && spreadsheetId && (
-          <div className="flex border-2 border-slate-900 rounded-2xl p-1 bg-slate-100 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] select-none">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:flex border-2 border-slate-900 rounded-2xl p-1 bg-slate-100 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] select-none gap-1 sm:gap-1.5 flex-wrap">
+            {/* 1. Barcode Scanner */}
+            <button
+              type="button"
+              onClick={() => {
+                setCurrentTab('scanner');
+              }}
+              className={`w-full md:w-auto md:flex-1 py-2.5 px-2 md:py-3 md:px-4 text-[11px] sm:text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 sm:gap-2 relative ${
+                currentTab === 'scanner'
+                  ? 'bg-slate-900 text-white shadow-[2px_2px_0px_0px_rgba(0,0,0,0.15)]'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200'
+              }`}
+            >
+              <QrCode className="w-4 h-4 text-emerald-500 shrink-0" />
+              <span className="truncate">Barcode Scanner</span>
+              {scannerActive && (
+                <span className="absolute top-1.5 right-2 flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+              )}
+            </button>
+
+            {/* 2. Registry & Catalog */}
             <button
               type="button"
               onClick={() => {
                 setCurrentTab('registry');
                 setScannerActive(false); // disable camera scanner when leaving scanner tab to save power/battery
               }}
-              className={`flex-1 py-3 px-4 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 ${
+              className={`w-full md:w-auto md:flex-1 py-2.5 px-2 md:py-3 md:px-4 text-[11px] sm:text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 sm:gap-2 ${
                 currentTab === 'registry'
                   ? 'bg-slate-900 text-white shadow-[2px_2px_0px_0px_rgba(0,0,0,0.15)]'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200'
               }`}
             >
-              <Package className="w-4 h-4" />
-              <span>Order Registry & Catalog</span>
+              <Package className="w-4 h-4 shrink-0" />
+              <span className="truncate">Registry & Catalog</span>
             </button>
+
+            {/* 3. Reports & Stats */}
             <button
               type="button"
               onClick={() => {
-                setCurrentTab('scanner');
+                setCurrentTab('reports');
+                setScannerActive(false);
               }}
-              className={`flex-1 py-3 px-4 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 relative ${
-                currentTab === 'scanner'
+              className={`w-full md:w-auto md:flex-1 py-2.5 px-2 md:py-3 md:px-4 text-[11px] sm:text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 sm:gap-2 ${
+                currentTab === 'reports'
                   ? 'bg-slate-900 text-white shadow-[2px_2px_0px_0px_rgba(0,0,0,0.15)]'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200'
               }`}
             >
-              <QrCode className="w-4 h-4 text-emerald-500" />
-              <span>Barcode Scanner Terminal</span>
-              {scannerActive && (
-                <span className="absolute top-2 right-4 flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                </span>
-              )}
+              <FileText className="w-4 h-4 text-pink-500 shrink-0" />
+              <span className="truncate">Reports & Stats</span>
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setCurrentTab('setup');
-                setScannerActive(false); // disable camera scanner when leaving scanner tab to save power/battery
-              }}
-              className={`flex-1 py-3 px-4 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 ${
-                currentTab === 'setup'
-                  ? 'bg-slate-900 text-white shadow-[2px_2px_0px_0px_rgba(0,0,0,0.15)]'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200'
-              }`}
-            >
-              <Settings className="w-4 h-4 text-indigo-500" />
-              <span>Setup & Configurations</span>
-            </button>
+
+            {/* 4. Manage Users */}
+            {activeSystemUser?.role === 'admin' ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setCurrentTab('users');
+                  setScannerActive(false);
+                }}
+                className={`w-full md:w-auto md:flex-1 py-2.5 px-2 md:py-3 md:px-4 text-[11px] sm:text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 sm:gap-2 ${
+                  currentTab === 'users'
+                    ? 'bg-slate-900 text-white shadow-[2px_2px_0px_0px_rgba(0,0,0,0.15)]'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200'
+                }`}
+              >
+                <Users className="w-4 h-4 text-blue-500 shrink-0" />
+                <span className="truncate">Manage Users</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  alert("Access Denied: Only administrators have permission to access the user control directory.");
+                }}
+                className="w-full md:w-auto md:flex-1 py-2.5 px-2 md:py-3 md:px-4 text-[11px] sm:text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-not-allowed opacity-50 flex items-center justify-center gap-1.5 sm:gap-2 text-slate-400"
+                title="Requires administrator privileges"
+              >
+                <Users className="w-4 h-4 text-slate-400 shrink-0" />
+                <span className="truncate">Manage Users</span>
+              </button>
+            )}
+
+            {/* 5. Setup & Config */}
+            {activeSystemUser?.role === 'admin' ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setCurrentTab('setup');
+                  setScannerActive(false); // disable camera scanner when leaving scanner tab to save power/battery
+                }}
+                className={`w-full md:w-auto md:flex-1 py-2.5 px-2 md:py-3 md:px-4 text-[11px] sm:text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 sm:gap-2 ${
+                  currentTab === 'setup'
+                    ? 'bg-slate-900 text-white shadow-[2px_2px_0px_0px_rgba(0,0,0,0.15)]'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200'
+                }`}
+              >
+                <Settings className="w-4 h-4 text-indigo-500 shrink-0" />
+                <span className="truncate">Setup & Config</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  alert("Access Denied: Only administrators have permission to access the setup & configuration panel.");
+                }}
+                className="w-full md:w-auto md:flex-1 py-2.5 px-2 md:py-3 md:px-4 text-[11px] sm:text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-not-allowed opacity-50 flex items-center justify-center gap-1.5 sm:gap-2 text-slate-400"
+                title="Requires administrator privileges"
+              >
+                <Settings className="w-4 h-4 text-slate-400 shrink-0" />
+                <span className="truncate">Setup & Config</span>
+              </button>
+            )}
           </div>
         )}
 
         {currentTab === 'setup' ? (
           <SetupModule />
+        ) : currentTab === 'reports' ? (
+          <ReportModule orders={orders} />
+        ) : currentTab === 'users' ? (
+          <UsersModule />
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           
@@ -1289,7 +2312,7 @@ export default function App() {
                   {/* Barcode Manual Keyin / Barcode gun listener Input */}
                   <form onSubmit={handleKeyInScanSubmit} className="space-y-3">
                     <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                      Position Barcode or Type Code
+                      Position Barcode or Type (SO#, PL#, or Invoice#)
                     </label>
                     <div className="flex gap-2">
                       <div className="relative flex-1">
@@ -1340,7 +2363,6 @@ export default function App() {
             {currentTab === 'registry' && (
               <>
                 {renderKpiSection()}
-                {renderLiveLogsSection()}
               </>
             )}
 
@@ -1379,29 +2401,59 @@ export default function App() {
 
             </div>
 
-            {/* Filter tab row */}
-            <div className="flex items-center flex-wrap gap-1 bg-slate-100 rounded-xl p-1 mb-4 text-xs font-bold border-2 border-slate-900">
-              {(['All', 'Registered', 'Picking', 'Checking', 'Delivery', 'Completed'] as const).map(tab => {
+            {/* Filter tab row - horizontally scrollable list on mobile, grid on large displays */}
+            <div className="flex items-center gap-1.5 bg-slate-100 rounded-2xl p-1.5 mb-5 text-xs font-bold border-2 border-slate-900 overflow-x-auto scrollbar-none snap-x whitespace-nowrap">
+              {(['All', 'Registered', 'Picking', 'Checking', 'Waiting Delivery', 'Delivery', 'Completed'] as const).filter(isFilterTabAllowed).map(tab => {
                 const count = tab === 'All' ? totalCount
                             : tab === 'Registered' ? inRegisteredCount
                             : tab === 'Picking' ? inPickingCount
                             : tab === 'Checking' ? inCheckingCount
+                            : tab === 'Waiting Delivery' ? inWaitingDeliveryCount
                             : tab === 'Delivery' ? inDeliveryCount
                             : tab === 'Completed' ? totalCompleted : 0;
+                
+                // Get corresponding icon and color
+                let IconComponent = Layers;
+                let activeClass = 'bg-slate-900 text-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]';
+                if (tab === 'Registered') {
+                  IconComponent = ClipboardList;
+                  activeClass = 'bg-sky-600 text-white shadow-[2px_2px_0px_0px_rgba(14,165,233,0.3)]';
+                } else if (tab === 'Picking') {
+                  IconComponent = Package;
+                  activeClass = 'bg-blue-600 text-white shadow-[2px_2px_0px_0px_rgba(37,99,235,0.3)]';
+                } else if (tab === 'Checking') {
+                  IconComponent = ClipboardCheck;
+                  activeClass = 'bg-amber-500 text-white shadow-[2px_2px_0px_0px_rgba(245,158,11,0.3)]';
+                } else if (tab === 'Waiting Delivery') {
+                  IconComponent = Clock;
+                  activeClass = 'bg-indigo-600 text-white shadow-[2px_2px_0px_0px_rgba(99,102,241,0.3)]';
+                } else if (tab === 'Delivery') {
+                  IconComponent = Truck;
+                  activeClass = 'bg-teal-600 text-white shadow-[2px_2px_0px_0px_rgba(20,184,166,0.3)]';
+                } else if (tab === 'Completed') {
+                  IconComponent = CheckCircle2;
+                  activeClass = 'bg-emerald-600 text-white shadow-[2px_2px_0px_0px_rgba(16,185,129,0.3)]';
+                }
+
+                const isActive = activeFilter === tab;
+
                 return (
                   <button
                     key={tab}
+                    id={`filter-tab-${tab.replace(/\s+/g, '-')}`}
+                    type="button"
                     onClick={() => setActiveFilter(tab)}
-                    className={`flex-1 min-w-[80px] py-1.5 px-2 flex items-center justify-center gap-1.5 rounded-lg transition-all cursor-pointer ${
-                      activeFilter === tab
-                        ? 'bg-slate-900 text-white shadow-xs'
-                        : 'text-slate-500 hover:text-slate-800'
+                    className={`shrink-0 min-w-max py-2 px-3.5 flex items-center justify-center gap-1.5 rounded-xl transition-all cursor-pointer snap-start border-2 border-transparent active:scale-95 ${
+                      isActive
+                        ? `${activeClass} border-slate-900`
+                        : 'text-slate-500 hover:text-slate-900 hover:bg-slate-200/50'
                     }`}
                   >
-                    <span>{tab}</span>
-                    <span className={`inline-flex items-center justify-center text-[10px] px-1.5 py-0.5 rounded-full font-extrabold transition-all min-w-[18px] ${
-                      activeFilter === tab
-                        ? 'bg-white text-slate-900'
+                    <IconComponent className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                    <span className="tracking-tight">{tab}</span>
+                    <span className={`inline-flex items-center justify-center text-[9px] px-1.5 py-0.5 rounded-full font-extrabold transition-all min-w-[18px] ${
+                      isActive
+                        ? 'bg-white/20 text-white'
                         : 'bg-slate-200 text-slate-700'
                     }`}>
                       {count}
@@ -1412,15 +2464,24 @@ export default function App() {
             </div>
 
             {/* Query Search */}
-            <div className="relative mb-5">
+            <div className="relative mb-5 focus-within:shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] focus-within:translate-y-[-1px] rounded-xl transition-all">
               <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-slate-500" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search orders in list by ID or description items..."
-                className="bg-slate-50 border-2 border-slate-900 rounded-xl pl-11 pr-4 py-3 w-full text-xs font-semibold outline-none focus:bg-white focus:ring-1 focus:ring-slate-900 transition-all placeholder:text-slate-400"
+                placeholder="Search orders in list by ID, customer, PL# or description..."
+                className="bg-slate-50 border-2 border-slate-900 rounded-xl pl-11 pr-10 py-3 w-full text-xs font-semibold outline-none focus:bg-white transition-all placeholder:text-slate-400"
               />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-md hover:bg-slate-100 text-slate-400 hover:text-slate-900 transition-colors cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
 
             {/* Table or Card list container */}
@@ -1471,155 +2532,221 @@ export default function App() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {filteredOrders.map(order => (
-                    <div
-                      key={order.id}
-                      onClick={() => setSelectedOrder(selectedOrder?.id === order.id ? null : order)}
-                      className={`p-4 rounded-2xl border-2 transition-all cursor-pointer flex flex-col gap-3.5 relative group hover:bg-slate-50/50 ${
-                        selectedOrder?.id === order.id
-                          ? 'border-slate-900 bg-slate-50/50 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] translate-y-[-1px]'
-                          : 'border-slate-200 bg-white hover:border-slate-400'
-                      }`}
-                    >
-                      {/* Top order summary */}
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          {order.lastUpdated && (
-                            <span className="font-sans font-bold text-[10px] text-slate-500 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded tracking-wide shrink-0">
-                              {(() => {
-                                try {
-                                  const d = new Date(order.lastUpdated);
-                                  return isNaN(d.getTime()) 
-                                    ? order.lastUpdated 
-                                    : d.toLocaleString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
-                                } catch (err) {
-                                  return order.lastUpdated;
-                                }
-                              })()}
+                  {filteredOrders.map(order => {
+                    const isSelected = selectedOrder?.id === order.id;
+                    return (
+                      <div
+                        key={order.id}
+                        onClick={() => setSelectedOrder(isSelected ? null : order)}
+                        className={`p-5 rounded-2xl border-2 transition-all cursor-pointer flex flex-col gap-4 relative group hover:bg-slate-50/40 ${
+                          isSelected
+                            ? 'border-slate-900 bg-slate-50/50 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] translate-y-[-2px]'
+                            : 'border-slate-200 bg-white hover:border-slate-950 hover:shadow-[2px_2px_0px_0px_rgba(15,23,42,0.08)]'
+                        }`}
+                      >
+                        {/* Responsive Top Identifier Row */}
+                        <div className="flex items-center justify-between gap-2.5 border-b border-dashed border-slate-200 pb-3 min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap text-slate-700 min-w-0">
+                            {order.lastUpdated && (
+                              <span className="font-mono font-bold text-[9px] text-slate-500 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-lg tracking-wide shrink-0 flex items-center gap-1">
+                                <Clock className="w-2.5 h-2.5 text-slate-400" />
+                                {(() => {
+                                  try {
+                                    const d = new Date(order.lastUpdated);
+                                    return isNaN(d.getTime()) 
+                                      ? order.lastUpdated 
+                                      : d.toLocaleString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                                  } catch (err) {
+                                    return order.lastUpdated;
+                                  }
+                                })()}
+                              </span>
+                            )}
+                            <span className="bg-slate-900 border-2 border-slate-900 font-mono font-black text-[9px] text-white px-2 py-0.5 rounded-lg tracking-wider uppercase shrink-0">
+                              SO#
                             </span>
-                          )}
-                          <span className="bg-slate-100 border border-slate-300 font-mono font-bold text-[10px] text-slate-700 px-1.5 py-0.5 rounded tracking-wide uppercase shrink-0">
-                            SO#
-                          </span>
-                          <span className="font-mono font-black text-sm text-slate-800 group-hover:text-slate-950 transition-colors">
-                            {order.id}
-                          </span>
-                          <ChevronRight className="w-3.5 h-3.5 text-slate-400 md:opacity-0 group-hover:opacity-100 transition-opacity" />
+                            <span className="font-mono font-black text-sm text-slate-900 group-hover:text-black transition-colors truncate min-w-0 tracking-tight">
+                              {order.id}
+                            </span>
+                            <a
+                              href={`${window.location.origin}${window.location.pathname}?track=${encodeURIComponent(order.id)}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                              }}
+                              className="inline-flex items-center gap-1 bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] font-sans font-extrabold px-2 py-0.5 rounded-lg hover:bg-indigo-100 transition-colors shrink-0 ml-1"
+                              title="Open tracking page in a new tab"
+                            >
+                              <ExternalLink className="w-2.5 h-2.5" />
+                              <span>Track Link</span>
+                            </a>
+                          </div>
+                          
+                          <div className="flex items-center gap-1 shrink-0">
+                            <span className={`text-[9px] sm:text-[10px] px-2.5 py-1 border-2 font-black rounded-xl uppercase tracking-wider shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] ${getStageBadgeColor(order.status)}`}>
+                              {getStageLabel(order.status)}
+                            </span>
+                            <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-slate-900 transition-colors hidden sm:block" />
+                          </div>
                         </div>
-                        <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+
+                        {/* Info Metadata section */}
+                        {(order.customerName || order.packingListNo || order.invoiceNumber || order.totalPackage || order.assignedTo || order.khanDistrict || order.cityProvince) && (
+                          <div className="flex flex-col gap-3 bg-slate-50/70 p-4 rounded-xl border border-slate-200 text-[11px] font-sans relative overflow-hidden">
+                            <div className="absolute top-0 left-0 w-1 h-full bg-slate-400" />
+                            
+                            {/* 1st line: Customer Name & Location */}
+                            {(order.customerName || order.khanDistrict || order.cityProvince) && (
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pl-1.5">
+                                {order.customerName && (
+                                  <div className="flex items-start gap-2 min-w-0">
+                                    <div className="p-1 rounded-lg bg-white border border-slate-200 text-slate-600 shrink-0 mt-0.5">
+                                      <User className="w-3.5 h-3.5" />
+                                    </div>
+                                    <div className="flex flex-col min-w-0">
+                                      <span className="text-[8px] uppercase font-extrabold text-slate-400 tracking-wider leading-none mb-0.5">Customer Name</span>
+                                      <span className="font-extrabold text-slate-800 text-[13px] break-words leading-tight">{order.customerName}</span>
+                                    </div>
+                                  </div>
+                                )}
+                                {(order.khanDistrict || order.cityProvince) && (
+                                  <div className="flex items-start gap-2 shrink-0">
+                                    <div className="p-1 rounded-lg bg-white border border-slate-200 text-slate-600 shrink-0 mt-0.5">
+                                      <MapPin className="w-3.5 h-3.5" />
+                                    </div>
+                                    <div className="flex flex-col">
+                                      <span className="text-[8px] uppercase font-extrabold text-slate-400 tracking-wider leading-none mb-0.5">Fulfillment Destination</span>
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        {order.khanDistrict && (
+                                          <span className="bg-indigo-100 text-indigo-850 font-extrabold px-2 py-0.5 rounded-md border border-indigo-200 text-[10px]">
+                                            {order.khanDistrict}
+                                          </span>
+                                        )}
+                                        {order.cityProvince && (
+                                          <span className="bg-slate-200 text-slate-705 font-extrabold px-2 py-0.5 rounded-md border border-slate-300 text-[10px]">
+                                            {order.cityProvince}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Grid row for parameters */}
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pl-1.5 pt-1.5 border-t border-dashed border-slate-200">
+                              {/* PL# */}
+                              <div className="bg-white border border-slate-250 rounded-xl p-2.5 flex flex-col justify-between hover:border-slate-400 transition-colors">
+                                <span className="text-[8px] sm:text-[9px] uppercase font-extrabold text-slate-450 tracking-wider mb-1 flex items-center gap-1 shrink-0">
+                                  <Clipboard className="w-2.5 h-2.5 text-slate-400" />
+                                  PL#
+                                </span>
+                                <span className={`font-mono font-bold text-xs select-all break-all leading-none ${order.packingListNo ? 'text-slate-850' : 'text-slate-400 italic'}`}>
+                                  {order.packingListNo || 'None'}
+                                </span>
+                              </div>
+                              {/* INV# */}
+                              <div className="bg-white border border-slate-250 rounded-xl p-2.5 flex flex-col justify-between hover:border-slate-400 transition-colors">
+                                <span className="text-[8px] sm:text-[9px] uppercase font-extrabold text-slate-455 tracking-wider mb-1 flex items-center gap-1 shrink-0">
+                                  <Receipt className="w-2.5 h-2.5 text-slate-400" />
+                                  Invoice
+                                </span>
+                                <span className={`font-mono font-bold text-xs select-all break-all leading-none ${order.invoiceNumber ? 'text-slate-850' : 'text-slate-400 italic'}`}>
+                                  {order.invoiceNumber || 'None'}
+                                </span>
+                              </div>
+                              {/* Pkg */}
+                              <div className="bg-white border border-slate-250 rounded-xl p-2.5 flex flex-col justify-between hover:border-slate-400 transition-colors">
+                                <span className="text-[8px] sm:text-[9px] uppercase font-extrabold text-slate-450 tracking-wider mb-1 flex items-center gap-1 shrink-0">
+                                  <Package className="w-2.5 h-2.5 text-slate-400" />
+                                  Package(s)
+                                </span>
+                                <span className={`font-sans font-black text-xs leading-none ${order.totalPackage ? 'text-slate-850' : 'text-slate-400 italic'}`}>
+                                  {order.totalPackage || '—'}
+                                </span>
+                              </div>
+                              {/* Assigned */}
+                              <div className="bg-white border border-slate-250 rounded-xl p-2.5 flex flex-col justify-between hover:border-slate-400 transition-colors">
+                                <span className="text-[8px] sm:text-[9px] uppercase font-extrabold text-slate-450 tracking-wider mb-1 flex items-center gap-1 shrink-0">
+                                  <Users className="w-2.5 h-2.5 text-slate-400" />
+                                  Started by
+                                </span>
+                                <span className={`font-sans font-bold text-xs truncate leading-none ${order.assignedTo ? 'text-slate-800' : 'text-slate-400 italic'}`}>
+                                  {order.assignedTo || 'Unassigned'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Items description preview */}
+                        {order.items ? (
+                          <div className="p-3 bg-indigo-50/50 hover:bg-indigo-50 border-2 border-dashed border-indigo-200 rounded-xl text-xs text-indigo-950 font-sans font-bold transition-colors group/note flex items-start gap-2.5">
+                            <MessageSquare className="w-4 h-4 text-indigo-500 group-hover/note:scale-110 transition-transform shrink-0 mt-0.5" />
+                            <span className="leading-relaxed whitespace-pre-line tracking-wide">
+                              {order.items}
+                            </span>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-slate-450 break-words italic font-sans font-bold flex items-center gap-2 pl-1.5">
+                            <FileText className="w-3.5 h-3.5 opacity-50 shrink-0" />
+                            <span>No items listed or special instructions provided.</span>
+                          </p>
+                        )}
+
+                        {/* Dedicated Smart Action Tray Section */}
+                        <div 
+                          className="flex flex-wrap items-center gap-2.5 pt-3 border-t border-slate-100 justify-end w-full"
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           <button
+                            type="button"
+                            onClick={() => {
+                              const trackingUrl = `${window.location.origin}${window.location.pathname}?track=${encodeURIComponent(order.id)}`;
+                              navigator.clipboard.writeText(trackingUrl);
+                              setCopiedId(order.id);
+                              setTimeout(() => setCopiedId(null), 2000);
+                            }}
+                            className="bg-slate-50 hover:bg-slate-150 text-slate-900 border-2 border-slate-900 font-sans font-black text-[10px] uppercase px-3.5 py-2 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] hover:translate-y-[-1px] hover:shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] active:translate-y-[1px] active:shadow-[1px_1px_0px_0px_rgba(15,23,42,1)] select-none"
+                            title="Copy public tracking page URL to clipboard"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5 text-slate-900" />
+                            <span>{copiedId === order.id ? 'Copied Link!' : 'Copy Link'}</span>
+                          </button>
+                          
+                          <button
+                            type="button"
                             onClick={() => {
                               setSelectedOrder(order);
                               setIsEditModalOpen(true);
                             }}
-                            className="bg-amber-100/80 hover:bg-amber-100 text-amber-950 font-sans font-bold text-[10px] uppercase px-2  py-1 rounded-xl transition-all flex items-center gap-1 cursor-pointer border border-amber-200"
+                            className="bg-amber-100 hover:bg-amber-200 text-amber-950 border-2 border-slate-900 font-sans font-black text-[10px] uppercase px-3.5 py-2 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] hover:translate-y-[-1px] hover:shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] active:translate-y-[1px] active:shadow-[1px_1px_0px_0px_rgba(15,23,42,1)] select-none"
                           >
-                            <Edit3 className="w-3 h-3 text-amber-700" />
+                            <Edit3 className="w-3.5 h-3.5 text-amber-800" />
                             <span>Edit</span>
                           </button>
+
                           {(() => {
                             const qa = getQuickActionConfig(order.status);
                             if (!qa) return null;
+                            const ActionIcon = qa.icon || CheckCircle2;
                             return (
                               <button
+                                type="button"
                                 onClick={() => handleAdvanceStageClick(order)}
-                                className={`font-sans font-bold text-[10px] uppercase px-2.5 py-1 rounded-xl transition-all flex items-center gap-1 cursor-pointer border shadow-[1px_1px_0px_0px_rgba(0,0,0,0.15)] active:translate-y-[1px] select-none ${qa.color}`}
+                                className={`font-sans font-black text-[10px] uppercase px-3.5 py-2 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer border-2 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] hover:translate-y-[-1px] hover:shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] active:translate-y-[1px] active:shadow-[1px_1px_0px_0px_rgba(15,23,42,1)] select-none ${qa.color}`}
                               >
+                                <ActionIcon className="w-3.5 h-3.5" />
                                 <span>{qa.label}</span>
                               </button>
                             );
                           })()}
-                          <span className={`text-[10px] px-2.5 py-1 border font-bold rounded-full uppercase shrink-0 ${getStageBadgeColor(order.status)}`}>
-                            {getStageLabel(order.status)}
-                          </span>
                         </div>
                       </div>
-
-                      {/* Info Metadata section */}
-                      {(order.customerName || order.packingListNo || order.invoiceNumber || order.totalPackage || order.assignedTo || order.khanDistrict || order.cityProvince) && (
-                        <div className="flex flex-col gap-2 bg-slate-50/50 p-3 rounded-xl border border-slate-150 text-[11px] font-sans">
-                          {/* 1st line: Customer Name & Location */}
-                          {(order.customerName || order.khanDistrict || order.cityProvince) && (
-                            <div className="flex items-center gap-1.5 flex-wrap text-slate-850">
-                              {order.customerName && (
-                                <div className="flex items-baseline gap-1.5 flex-wrap">
-                                  <span className="text-[10px] uppercase font-extrabold text-slate-400 tracking-wider shrink-0">Cust:</span>
-                                  <span className="font-bold text-slate-800 text-[13px] break-words">{order.customerName}</span>
-                                </div>
-                              )}
-                              {(order.khanDistrict || order.cityProvince) && (
-                                <div className="flex items-center gap-1.5 flex-wrap shrink-0">
-                                  <span className="text-slate-300 select-none text-[11px] font-medium font-sans">|</span>
-                                  {order.khanDistrict && (
-                                    <span className="bg-indigo-50 text-indigo-700 font-bold px-2 py-0.5 rounded-md border border-indigo-100 text-[10px] select-all">
-                                      {order.khanDistrict}
-                                    </span>
-                                  )}
-                                  {order.cityProvince && (
-                                    <span className="bg-slate-100 text-slate-600 font-bold px-2 py-0.5 rounded-md border border-slate-250 text-[10px] select-all">
-                                      {order.cityProvince}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          )}
-
-                          {/* 2nd line: PL#, INV# */}
-                          <div className="flex items-center gap-4 flex-wrap">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-[10px] uppercase font-extrabold text-slate-400 tracking-wider">PL#:</span>
-                              <span className={`font-mono font-bold bg-white border rounded px-1.5 py-0.5 select-all ${order.packingListNo ? 'text-slate-800 border-slate-200' : 'text-slate-400 border-slate-200'}`}>
-                                {order.packingListNo || 'NA'}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-[10px] uppercase font-extrabold text-slate-400 tracking-wider">INV#:</span>
-                              <span className={`font-mono font-bold bg-white border rounded px-1.5 py-0.5 select-all ${order.invoiceNumber ? 'text-slate-800 border-slate-200' : 'text-slate-400 border-slate-200'}`}>
-                                {order.invoiceNumber || 'NA'}
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* 3rd line: Total Package, Assigned To */}
-                          {(order.totalPackage || order.assignedTo) && (
-                            <div className="flex items-center gap-4 flex-wrap">
-                              {order.totalPackage && (
-                                <div className="flex items-center gap-1.5">
-                                  <span className="text-[10px] uppercase font-extrabold text-slate-400 tracking-wider">Pkg:</span>
-                                  <span className="font-bold text-slate-700 bg-white border border-slate-200 rounded px-1.5 py-0.5">{order.totalPackage}</span>
-                                </div>
-                              )}
-                              {order.assignedTo && (
-                                <div className="flex items-center gap-1.5">
-                                  <span className="text-[10px] uppercase font-extrabold text-slate-400 tracking-wider">Assigned:</span>
-                                  <span className="font-bold text-slate-700 bg-white border border-slate-200 rounded px-1.5 py-0.5">{order.assignedTo}</span>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Items description preview */}
-                      {order.items ? (
-                        <div className="mt-3.5 p-3.5 bg-indigo-50/75 hover:bg-indigo-50 border-l-4 border-indigo-600 rounded-xl rounded-l-none text-xs text-indigo-950 font-sans font-semibold shadow-xs flex items-center gap-2.5 transition-colors group/note">
-                          <MessageSquare className="w-4 h-4 text-indigo-500 group-hover/note:scale-110 transition-transform shrink-0" />
-                          <span className="leading-relaxed whitespace-pre-line tracking-wide">
-                            {order.items}
-                          </span>
-                        </div>
-                      ) : (
-                        <p className="text-xs text-slate-400/90 break-words italic font-sans font-medium mt-3 flex items-center gap-2">
-                          <FileText className="w-3.5 h-3.5 opacity-40 shrink-0" />
-                          <span>No item or special documentation notes specified.</span>
-                        </p>
-                      )}
-
-
-
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1666,6 +2793,14 @@ export default function App() {
                 </div>
 
                 <div className="flex items-center gap-2">
+                  {/* Share/Print QR manual action button */}
+                  <button
+                    onClick={() => setQrModalOrder(selectedOrder)}
+                    className="bg-indigo-50 hover:bg-indigo-100 text-indigo-950 p-2.5 rounded-xl transition-all border-2 border-slate-900 cursor-pointer shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:translate-y-[-1px]"
+                    title="Generate and print tracking QR Code"
+                  >
+                    <QrCode className="w-4 h-4 text-indigo-650" />
+                  </button>
                   {/* Edit Record manual action button */}
                   <button
                     onClick={() => setIsEditModalOpen(true)}
@@ -1732,7 +2867,7 @@ export default function App() {
                   )}
                   {selectedOrder.assignedTo && (
                     <div>
-                      <span className="text-[9px] uppercase font-bold text-slate-450 tracking-wider block mb-0.5 font-sans">Assigned To</span>
+                      <span className="text-[9px] uppercase font-bold text-slate-450 tracking-wider block mb-0.5 font-sans">Started by</span>
                       <span className="font-sans font-bold text-slate-900">{selectedOrder.assignedTo}</span>
                     </div>
                   )}
@@ -2103,6 +3238,93 @@ export default function App() {
         onConfirm={confirmDialog.onConfirm}
         onCancel={() => setConfirmDialog(p => ({ ...p, isOpen: false }))}
       />
+
+      {/* QR Code sharing and printing modal */}
+      {qrModalOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white border-4 border-slate-900 rounded-3xl p-6 max-w-md w-full relative space-y-6 shadow-[8px_8px_0px_0px_rgba(15,23,42,1)] animate-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b pb-2.5 border-slate-100">
+              <h3 className="font-display font-black text-slate-900 text-sm sm:text-base uppercase tracking-wider flex items-center gap-2">
+                <QrCode className="w-5 h-5 text-indigo-600" /> Share & Print QR Tracker
+              </h3>
+              <button
+                onClick={() => setQrModalOrder(null)}
+                className="text-slate-400 hover:text-slate-900 transition-colors font-bold text-lg p-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Print wrapper - styles conform with media tag */}
+            <div className="bg-slate-50 border-2 border-slate-900 rounded-2xl p-4 flex flex-col items-center justify-center text-center space-y-3 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] print-only-wrapper relative">
+              <div className="flex items-center gap-1.5 border-b border-dashed border-slate-200 w-full pb-2 shrink-0">
+                <Barcode className="w-4 h-4 text-slate-900" />
+                <span className="font-display font-black text-slate-900 text-xs tracking-tight">ScanFlow Logistics</span>
+                <span className="ml-auto text-[8px] font-mono font-extrabold text-slate-500 uppercase tracking-widest bg-slate-100 px-1 py-0.5 rounded">LIVE TRACKER</span>
+              </div>
+
+              <div className="bg-white border-2 border-slate-900 p-3 rounded-2xl shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] flex items-center justify-center">
+                <QRCodeSVG
+                  id={`qr-svg-${qrModalOrder.id}`}
+                  value={`${window.location.origin}${window.location.pathname}?track=${encodeURIComponent(qrModalOrder.id)}`}
+                  size={140}
+                  level="M"
+                />
+              </div>
+
+              <div className="w-full text-left space-y-1 bg-white border border-slate-150 rounded-xl p-3 shrink-0 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] uppercase font-bold text-slate-400">Order ID (SO#)</span>
+                  <span className="font-mono font-black text-slate-950 text-xs bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">{qrModalOrder.id}</span>
+                </div>
+                {qrModalOrder.customerName && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] uppercase font-bold text-slate-400">Customer</span>
+                    <span className="font-sans font-bold text-slate-800 text-[11px] truncate max-w-[160px] text-right">{qrModalOrder.customerName}</span>
+                  </div>
+                )}
+                {qrModalOrder.packingListNo && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] uppercase font-bold text-slate-400">PL No</span>
+                    <span className="font-mono text-slate-700 text-[10px] bg-slate-50 border px-1 py-0.5 rounded">{qrModalOrder.packingListNo}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between pt-1 border-t border-dashed border-slate-200">
+                  <span className="text-[9px] uppercase font-bold text-slate-405">Current Progress</span>
+                  <span className={`text-[8px] font-extrabold px-2 py-0.5 rounded bg-slate-100 border uppercase shrink-0`}>
+                    {getStageLabel(qrModalOrder.status)}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <p className="text-[10px] text-slate-400 text-center leading-relaxed">
+              This QR code maps secure offline-first tracking identifiers. Scanning with any mobile smartphone displays the live interactive logs instantly.
+            </p>
+
+            <div className="flex items-center gap-3 w-full pt-1">
+              <button
+                onClick={() => {
+                  const link = `${window.location.origin}${window.location.pathname}?track=${encodeURIComponent(qrModalOrder.id)}`;
+                  navigator.clipboard.writeText(link);
+                  setCopiedId(qrModalOrder.id);
+                  setTimeout(() => setCopiedId(null), 2000);
+                }}
+                className="flex-1 bg-white hover:bg-slate-50 text-slate-900 border-2 border-slate-900 font-bold text-xs uppercase py-2.5 rounded-xl transition-all shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-y-[1px] cursor-pointer text-center"
+              >
+                {copiedId === qrModalOrder.id ? 'Copied Link!' : 'Copy Link'}
+              </button>
+              <button
+                onClick={() => window.print()}
+                className="flex-1 bg-slate-900 hover:bg-slate-800 text-white border-2 border-slate-900 font-black text-xs uppercase py-2.5 rounded-xl transition-all shadow-[2px_2px_0px_0px_rgba(0,0,0,0.25)] active:translate-y-[1px] cursor-pointer text-center"
+              >
+                Print tag
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

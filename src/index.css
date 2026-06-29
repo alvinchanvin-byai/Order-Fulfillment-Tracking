@@ -45,3 +45,40 @@ body {
 .animate-scan-line {
   animation: scan-line 3s infinite linear;
 }
+
+/* Print custom isolating utilities */
+@media print {
+  body {
+    background-color: white !important;
+    color: black !important;
+  }
+  /* Hide every normal element on page */
+  body > div:not(.print-only-wrapper),
+  #root > div:not(.print-only-wrapper),
+  main, header, footer, button, dialog, .modal-backdrop {
+    display: none !important;
+    opacity: 0 !important;
+    visibility: hidden !important;
+  }
+  /* Ensure our target is completely isolated, full-width and centered */
+  .print-only-wrapper {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 6.5in !important;
+    height: 4in !important;
+    display: block !important;
+    visibility: visible !important;
+    z-index: 9999999 !important;
+    margin: 0.5in auto !important;
+    padding: 24px !important;
+    background: white !important;
+    border: 3px solid black !important;
+    border-radius: 20px !important;
+  }
+  /* Print backgrounds accurately */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}
