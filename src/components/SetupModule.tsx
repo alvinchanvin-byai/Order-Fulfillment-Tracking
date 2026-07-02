@@ -25,6 +25,12 @@ import {
   Package
 } from 'lucide-react';
 import { CustomerMaster } from '../types';
+import {
+  fetchSetupDataFromSheet,
+  saveSetupRegistryToSheet,
+  saveSetupCustomerMastersToSheet,
+  saveAllSetupToSheets
+} from '../lib/sheets';
 
 const DEFAULT_CUSTOMER_MASTER: CustomerMaster[] = [
   { customerName: 'Pracheachun Pharmacy (SHV)', defaultKhan: 'Preah Sihanouk Municipali', defaultProvince: 'Preah Sihanouk' },
@@ -121,7 +127,12 @@ const DEFAULT_PACKAGE_UNITS = [
   'pails'
 ];
 
-export function SetupModule() {
+interface SetupModuleProps {
+  token?: string | null;
+  spreadsheetId?: string | null;
+}
+
+export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
   // Option lists states
   const [customers, setCustomers] = useState<string[]>([]);
   const [khans, setKhans] = useState<string[]>([]);
@@ -206,26 +217,85 @@ export function SetupModule() {
   // Notification system
   const [notification, setNotification] = useState<{ text: string; type: 'success' | 'info' } | null>(null);
 
-  // Load from local storage on mount
+  // Load from local storage on mount and fetch from Google Sheets if available
   useEffect(() => {
+    // 1. Initial load from local storage
     const savedCusts = safeStorage.getItem('scanflow_customers');
-    setCustomers(savedCusts ? JSON.parse(savedCusts) : DEFAULT_CUSTOMERS);
+    const initCusts = savedCusts ? JSON.parse(savedCusts) : DEFAULT_CUSTOMERS;
+    setCustomers(initCusts);
 
     const savedKhans = safeStorage.getItem('scanflow_khans');
-    setKhans(savedKhans ? JSON.parse(savedKhans) : DEFAULT_KHANS);
+    const initKhans = savedKhans ? JSON.parse(savedKhans) : DEFAULT_KHANS;
+    setKhans(initKhans);
 
     const savedProvs = safeStorage.getItem('scanflow_provinces');
-    setProvinces(savedProvs ? JSON.parse(savedProvs) : DEFAULT_PROVINCES);
+    const initProvs = savedProvs ? JSON.parse(savedProvs) : DEFAULT_PROVINCES;
+    setProvinces(initProvs);
 
     const savedBus = safeStorage.getItem('scanflow_bus');
-    setBus(savedBus ? JSON.parse(savedBus) : DEFAULT_BUs);
+    const initBus = savedBus ? JSON.parse(savedBus) : DEFAULT_BUs;
+    setBus(initBus);
 
     const savedPackageUnits = safeStorage.getItem('scanflow_package_units');
-    setPackageUnits(savedPackageUnits ? JSON.parse(savedPackageUnits) : DEFAULT_PACKAGE_UNITS);
+    const initPackageUnits = savedPackageUnits ? JSON.parse(savedPackageUnits) : DEFAULT_PACKAGE_UNITS;
+    setPackageUnits(initPackageUnits);
 
     const savedMasters = safeStorage.getItem('scanflow_customer_master');
-    setCustomerMasters(savedMasters ? JSON.parse(savedMasters) : DEFAULT_CUSTOMER_MASTER);
-  }, []);
+    const initMasters = savedMasters ? JSON.parse(savedMasters) : DEFAULT_CUSTOMER_MASTER;
+    setCustomerMasters(initMasters);
+
+    // 2. Fetch from connected spreadsheet if online
+    if (token && spreadsheetId) {
+      fetchSetupDataFromSheet(token, spreadsheetId)
+        .then((data) => {
+          if (data.customers.length > 0) {
+            setCustomers(data.customers);
+            safeStorage.setItem('scanflow_customers', JSON.stringify(data.customers));
+          } else {
+            saveSetupRegistryToSheet(token, spreadsheetId, 'Customer_Registry', initCusts).catch(console.error);
+          }
+
+          if (data.khans.length > 0) {
+            setKhans(data.khans);
+            safeStorage.setItem('scanflow_khans', JSON.stringify(data.khans));
+          } else {
+            saveSetupRegistryToSheet(token, spreadsheetId, 'Districts_Khan', initKhans).catch(console.error);
+          }
+
+          if (data.provinces.length > 0) {
+            setProvinces(data.provinces);
+            safeStorage.setItem('scanflow_provinces', JSON.stringify(data.provinces));
+          } else {
+            saveSetupRegistryToSheet(token, spreadsheetId, 'Cities_Province', initProvs).catch(console.error);
+          }
+
+          if (data.bus.length > 0) {
+            setBus(data.bus);
+            safeStorage.setItem('scanflow_bus', JSON.stringify(data.bus));
+          } else {
+            saveSetupRegistryToSheet(token, spreadsheetId, 'Business_Units', initBus).catch(console.error);
+          }
+
+          if (data.packageUnits.length > 0) {
+            setPackageUnits(data.packageUnits);
+            safeStorage.setItem('scanflow_package_units', JSON.stringify(data.packageUnits));
+          } else {
+            saveSetupRegistryToSheet(token, spreadsheetId, 'Packing_Units', initPackageUnits).catch(console.error);
+          }
+
+          if (data.customerMasters.length > 0) {
+            setCustomerMasters(data.customerMasters);
+            safeStorage.setItem('scanflow_customer_master', JSON.stringify(data.customerMasters));
+          } else {
+            saveSetupCustomerMastersToSheet(token, spreadsheetId, initMasters).catch(console.error);
+          }
+        })
+        .catch((err) => {
+          console.error('Failed to load setup data from sheet:', err);
+          showToast('Failed to pull setup from Google Sheet. Using local cache.', 'info');
+        });
+    }
+  }, [token, spreadsheetId]);
 
   // Save actions
   const showToast = (text: string, type: 'success' | 'info' = 'success') => {
@@ -235,9 +305,42 @@ export function SetupModule() {
     }, 4000);
   };
 
-  const updateStorage = (key: string, data: string[], message: string) => {
+  const updateStorage = async (key: string, data: string[], message: string) => {
     safeStorage.setItem(key, JSON.stringify(data));
     showToast(message, 'success');
+
+    if (token && spreadsheetId) {
+      let type: 'Customer_Registry' | 'Districts_Khan' | 'Cities_Province' | 'Business_Units' | 'Packing_Units' | null = null;
+      if (key === 'scanflow_customers') type = 'Customer_Registry';
+      else if (key === 'scanflow_khans') type = 'Districts_Khan';
+      else if (key === 'scanflow_provinces') type = 'Cities_Province';
+      else if (key === 'scanflow_bus') type = 'Business_Units';
+      else if (key === 'scanflow_package_units') type = 'Packing_Units';
+
+      if (type) {
+        try {
+          await saveSetupRegistryToSheet(token, spreadsheetId, type, data);
+        } catch (err) {
+          console.error(`Failed to sync registry ${type} with Google Sheets:`, err);
+          showToast(`Registry updated locally, but failed to sync with Google Sheet.`, 'info');
+        }
+      }
+    }
+  };
+
+  const updateCustomerMasterStorage = async (updated: CustomerMaster[], message: string) => {
+    setCustomerMasters(updated);
+    safeStorage.setItem('scanflow_customer_master', JSON.stringify(updated));
+    showToast(message, 'success');
+
+    if (token && spreadsheetId) {
+      try {
+        await saveSetupCustomerMastersToSheet(token, spreadsheetId, updated);
+      } catch (err) {
+        console.error('Failed to sync Customer Master with Google Sheets:', err);
+        showToast('Customer master updated locally, but failed to sync with Google Sheet.', 'info');
+      }
+    }
   };
 
   // Export list as standard Excel format
@@ -401,22 +504,23 @@ export function SetupModule() {
           updatedList = newItems;
         }
 
-        // Update active hook state
+        // Update active hook state & persist
         if (targetType === 'customers') {
           setCustomers(updatedList);
+          updateStorage('scanflow_customers', updatedList, `Successfully registered ${updatedList.length} items to ${label}!`);
         } else if (targetType === 'khans') {
           setKhans(updatedList);
+          updateStorage('scanflow_khans', updatedList, `Successfully registered ${updatedList.length} items to ${label}!`);
         } else if (targetType === 'provinces') {
           setProvinces(updatedList);
+          updateStorage('scanflow_provinces', updatedList, `Successfully registered ${updatedList.length} items to ${label}!`);
         } else if (targetType === 'bus') {
           setBus(updatedList);
+          updateStorage('scanflow_bus', updatedList, `Successfully registered ${updatedList.length} items to ${label}!`);
         } else if (targetType === 'package_units') {
           setPackageUnits(updatedList);
+          updateStorage('scanflow_package_units', updatedList, `Successfully registered ${updatedList.length} items to ${label}!`);
         }
-
-        // Save immediately to localStorage
-        safeStorage.setItem(storageKey, JSON.stringify(updatedList));
-        showToast(`Successfully registered ${updatedList.length} items to ${label}!`, 'success');
       } catch (err: any) {
         showToast(`Error processing book: ${err.message || err}`, 'info');
       } finally {
@@ -475,6 +579,21 @@ export function SetupModule() {
     });
   };
 
+  const handleClearAllCustomers = () => {
+    requestConfirm({
+      title: 'Clean Customer Registry',
+      message: 'Are you sure you want to clear/wipe ALL customer registry entries? This will delete all registered customer names. (You can restore default presets using the "Restore Setup Presets" button).',
+      confirmLabel: 'Clean Data',
+      cancelLabel: 'Cancel',
+      isDestructive: true,
+      onConfirm: () => {
+        setCustomers([]);
+        updateStorage('scanflow_customers', [], 'Customer Registry has been completely cleared.');
+        setConfirmModal(null);
+      }
+    });
+  };
+
   // --- CRUD Functions for KHANS ---
   const handleAddKhan = (e: FormEvent) => {
     e.preventDefault();
@@ -518,6 +637,21 @@ export function SetupModule() {
         const updated = khans.filter((_, i) => i !== index);
         setKhans(updated);
         updateStorage('scanflow_khans', updated, `Deleted Khan/District: ${oldVal}`);
+        setConfirmModal(null);
+      }
+    });
+  };
+
+  const handleClearAllKhans = () => {
+    requestConfirm({
+      title: 'Clean Districts Registry',
+      message: 'Are you sure you want to clear/wipe ALL districts (khan) registry entries? This will delete all custom registered district names. (You can restore default presets using the "Restore Setup Presets" button).',
+      confirmLabel: 'Clean Data',
+      cancelLabel: 'Cancel',
+      isDestructive: true,
+      onConfirm: () => {
+        setKhans([]);
+        updateStorage('scanflow_khans', [], 'Districts (Khan) Registry has been completely cleared.');
         setConfirmModal(null);
       }
     });
@@ -668,7 +802,7 @@ export function SetupModule() {
   };
 
   // --- CRUD Functions for CUSTOMER MASTER ---
-  const handleAddCustomerMaster = (e: FormEvent) => {
+  const handleAddCustomerMaster = async (e: FormEvent) => {
     e.preventDefault();
     const name = mCustName.trim();
     if (!name) return;
@@ -682,12 +816,10 @@ export function SetupModule() {
       defaultProvince: mCustProvince.trim()
     };
     const updated = [...customerMasters, newMaster];
-    setCustomerMasters(updated);
     setMCustName('');
     setMCustKhan('');
     setMCustProvince('');
-    safeStorage.setItem('scanflow_customer_master', JSON.stringify(updated));
-    showToast(`Added Customer Master: ${name}`);
+    await updateCustomerMasterStorage(updated, `Added Customer Master: ${name}`);
   };
 
   const handleStartEditCustomerMaster = (index: number) => {
@@ -698,7 +830,7 @@ export function SetupModule() {
     setEditingMCustProvince(m.defaultProvince);
   };
 
-  const handleSaveCustomerMaster = (index: number) => {
+  const handleSaveCustomerMaster = async (index: number) => {
     const name = editingMCustName.trim();
     if (!name) return;
     const updated = [...customerMasters];
@@ -708,10 +840,8 @@ export function SetupModule() {
       defaultKhan: editingMCustKhan.trim(),
       defaultProvince: editingMCustProvince.trim()
     };
-    setCustomerMasters(updated);
     setEditingMasterIndex(null);
-    safeStorage.setItem('scanflow_customer_master', JSON.stringify(updated));
-    showToast(`Updated Customer Master "${oldName}" to "${name}"`);
+    await updateCustomerMasterStorage(updated, `Updated Customer Master "${oldName}" to "${name}"`);
   };
 
   const handleDeleteCustomerMaster = (index: number) => {
@@ -722,11 +852,9 @@ export function SetupModule() {
       confirmLabel: 'Delete',
       cancelLabel: 'Cancel',
       isDestructive: true,
-      onConfirm: () => {
+      onConfirm: async () => {
         const updated = customerMasters.filter((_, i) => i !== index);
-        setCustomerMasters(updated);
-        safeStorage.setItem('scanflow_customer_master', JSON.stringify(updated));
-        showToast(`Deleted Customer Master: ${oldName}`);
+        await updateCustomerMasterStorage(updated, `Deleted Customer Master: ${oldName}`);
         setConfirmModal(null);
       }
     });
@@ -842,7 +970,7 @@ export function SetupModule() {
     reader.readAsArrayBuffer(file);
   };
 
-  const handleExecuteImport = (append: boolean) => {
+  const handleExecuteImport = async (append: boolean) => {
     if (!importChoiceModal) return;
     const { records } = importChoiceModal;
     let updated: CustomerMaster[];
@@ -856,9 +984,7 @@ export function SetupModule() {
       updated = records;
     }
 
-    setCustomerMasters(updated);
-    safeStorage.setItem('scanflow_customer_master', JSON.stringify(updated));
-    showToast(`Successfully imported ${updated.length} customer master records!`, 'success');
+    await updateCustomerMasterStorage(updated, `Successfully imported ${updated.length} customer master records!`);
     setImportChoiceModal(null);
   };
 
@@ -870,7 +996,7 @@ export function SetupModule() {
       confirmLabel: 'Restore Presets',
       cancelLabel: 'Cancel',
       isDestructive: true,
-      onConfirm: () => {
+      onConfirm: async () => {
         setCustomers(DEFAULT_CUSTOMERS);
         setKhans(DEFAULT_KHANS);
         setProvinces(DEFAULT_PROVINCES);
@@ -883,7 +1009,25 @@ export function SetupModule() {
         safeStorage.setItem('scanflow_bus', JSON.stringify(DEFAULT_BUs));
         safeStorage.setItem('scanflow_package_units', JSON.stringify(DEFAULT_PACKAGE_UNITS));
         safeStorage.setItem('scanflow_customer_master', JSON.stringify(DEFAULT_CUSTOMER_MASTER));
-        showToast('Successfully restored default registry values.', 'success');
+        
+        if (token && spreadsheetId) {
+          try {
+            await saveAllSetupToSheets(token, spreadsheetId, {
+              customers: DEFAULT_CUSTOMERS,
+              khans: DEFAULT_KHANS,
+              provinces: DEFAULT_PROVINCES,
+              bus: DEFAULT_BUs,
+              packageUnits: DEFAULT_PACKAGE_UNITS,
+              customerMasters: DEFAULT_CUSTOMER_MASTER
+            });
+            showToast('Successfully restored default registry values locally and on Google Sheets.', 'success');
+          } catch (err) {
+            console.error('Failed to sync restored presets to Google Sheets:', err);
+            showToast('Restored presets locally, but could not sync to Google Sheets.', 'info');
+          }
+        } else {
+          showToast('Successfully restored default registry values.', 'success');
+        }
         setConfirmModal(null);
       }
     });
@@ -936,12 +1080,12 @@ export function SetupModule() {
             <button
               type="button"
               onClick={() => handleExportList(customers, 'scanflow_customers', 'Customer Name')}
-              className="flex-1 py-1.5 px-3 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer animate-none"
+              className="flex-1 py-1.5 px-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[10px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer animate-none"
             >
               <Download className="w-3.5 h-3.5 text-indigo-500" />
               <span>Export Excel (.xlsx)</span>
             </button>
-            <label className="flex-1 py-1.5 px-3 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer text-center">
+            <label className="flex-1 py-1.5 px-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[10px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer text-center">
               <Upload className="w-3.5 h-3.5 text-indigo-500" />
               <span>Import Excel/CSV</span>
               <input
@@ -951,6 +1095,15 @@ export function SetupModule() {
                 className="hidden"
               />
             </label>
+            <button
+              type="button"
+              onClick={handleClearAllCustomers}
+              className="py-1.5 px-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 hover:border-rose-300 rounded-xl text-[10px] font-extrabold transition-all flex items-center justify-center gap-1 cursor-pointer"
+              title="Clear/Wipe Customer list"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+              <span>Clean Data</span>
+            </button>
           </div>
 
           {/* Quick Create Form */}
@@ -1071,12 +1224,12 @@ export function SetupModule() {
             <button
               type="button"
               onClick={() => handleExportList(khans, 'scanflow_khans', 'District (Khan)')}
-              className="flex-1 py-1.5 px-3 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer animate-none"
+              className="flex-1 py-1.5 px-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[10px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer animate-none"
             >
               <Download className="w-3.5 h-3.5 text-orange-500" />
               <span>Export Excel (.xlsx)</span>
             </button>
-            <label className="flex-1 py-1.5 px-3 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer text-center">
+            <label className="flex-1 py-1.5 px-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[10px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer text-center">
               <Upload className="w-3.5 h-3.5 text-orange-500" />
               <span>Import Excel/CSV</span>
               <input
@@ -1086,6 +1239,15 @@ export function SetupModule() {
                 className="hidden"
               />
             </label>
+            <button
+              type="button"
+              onClick={handleClearAllKhans}
+              className="py-1.5 px-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 hover:border-rose-300 rounded-xl text-[10px] font-extrabold transition-all flex items-center justify-center gap-1 cursor-pointer"
+              title="Clear/Wipe Districts list"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+              <span>Clean Data</span>
+            </button>
           </div>
 
           {/* Quick Create Form */}

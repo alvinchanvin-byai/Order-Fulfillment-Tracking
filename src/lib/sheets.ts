@@ -12,7 +12,7 @@ import {
   User,
   signOut
 } from 'firebase/auth';
-import type { Order, OrderStage, UserCredentials } from '../types';
+import type { Order, OrderStage, UserCredentials, CustomerMaster } from '../types';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { safeSessionStorage } from './storage';
 
@@ -100,18 +100,20 @@ const HEADERS = [
   'Khan / District',
   'City / Province',
   'Assigned To',
-  'BU'
+  'BU',
+  'Invoice Amount',
+  'SO Date'
 ];
 
 /**
  * Creates a brand new Google Sheet with headers initialized.
  */
-export async function createOrderSpreadsheet(accessToken: string): Promise<{ id: string; url: string }> {
+export async function createOrderSpreadsheet(accessToken: string, customTitle?: string): Promise<{ id: string; url: string }> {
   const url = 'https://sheets.googleapis.com/v4/spreadsheets';
   
   const body = {
     properties: {
-      title: 'Order Fulfillment & Barcode Tracker'
+      title: customTitle || 'Order Fulfillment & Barcode Tracker'
     },
     sheets: [
       {
@@ -153,7 +155,7 @@ export async function createOrderSpreadsheet(accessToken: string): Promise<{ id:
  * Helper to write headers to Row 1
  */
 async function writeHeaders(accessToken: string, spreadsheetId: string): Promise<void> {
-  const range = `${DEFAULT_SHEET_NAME}!A1:R1`;
+  const range = `${DEFAULT_SHEET_NAME}!A1:S1`;
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
   
   const body = {
@@ -237,7 +239,7 @@ export async function fetchOrdersFromSheet(accessToken: string, spreadsheetId: s
   // Ensure the tab exists
   await ensureOrdersSheetExists(accessToken, spreadsheetId);
 
-  const range = `${DEFAULT_SHEET_NAME}!A2:R`; // Fetch all orders to avoid missing rows below 1000
+  const range = `${DEFAULT_SHEET_NAME}!A2:S`; // Fetch all orders to avoid missing rows below 1000
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}`;
   
   const res = await fetch(url, {
@@ -252,28 +254,46 @@ export async function fetchOrdersFromSheet(accessToken: string, spreadsheetId: s
   const data = await res.json();
   const rows: any[][] = data.values || [];
 
-  return rows.map((row) => ({
-    id: String(row[0] || '').trim(),
-    status: (row[1] || 'PENDING_PICKING') as OrderStage,
-    pickStart: String(row[2] || ''),
-    pickEnd: String(row[3] || ''),
-    checkStart: String(row[4] || ''),
-    checkEnd: String(row[5] || ''),
-    deliveryStart: String(row[6] || ''),
-    deliveryEnd: String(row[7] || ''),
-    items: String(row[8] || ''),
-    lastUpdated: String(row[9] || ''),
-    
-    // New Sale Order fields
-    customerName: String(row[10] || ''),
-    packingListNo: String(row[11] || ''),
-    totalPackage: String(row[12] || ''),
-    invoiceNumber: String(row[13] || ''),
-    khanDistrict: String(row[14] || ''),
-    cityProvince: String(row[15] || ''),
-    assignedTo: String(row[16] || ''),
-    bu: String(row[17] || '')
-  })).filter(order => order.id !== ''); // Filter active IDs
+  return rows.map((row) => {
+    const rawItems = String(row[8] || '');
+    let items = rawItems;
+    let deliveryAttempts: any[] = [];
+    if (rawItems.includes('||DELIVERY_ATTEMPTS||')) {
+      const parts = rawItems.split('||DELIVERY_ATTEMPTS||');
+      items = parts[0];
+      try {
+        deliveryAttempts = JSON.parse(parts[1]);
+      } catch (e) {
+        console.error('Failed to parse delivery attempts JSON from sheets', e);
+      }
+    }
+
+    return {
+      id: String(row[0] || '').trim(),
+      status: (row[1] || 'PENDING_PICKING') as OrderStage,
+      pickStart: String(row[2] || ''),
+      pickEnd: String(row[3] || ''),
+      checkStart: String(row[4] || ''),
+      checkEnd: String(row[5] || ''),
+      deliveryStart: String(row[6] || ''),
+      deliveryEnd: String(row[7] || ''),
+      items,
+      deliveryAttempts,
+      lastUpdated: String(row[9] || ''),
+      
+      // New Sale Order fields
+      customerName: String(row[10] || ''),
+      packingListNo: String(row[11] || ''),
+      totalPackage: String(row[12] || ''),
+      invoiceNumber: String(row[13] || ''),
+      khanDistrict: String(row[14] || ''),
+      cityProvince: String(row[15] || ''),
+      assignedTo: String(row[16] || ''),
+      bu: String(row[17] || ''),
+      invoiceAmount: String(row[18] || ''),
+      soDate: String(row[19] || row[9] || '')
+    };
+  }).filter(order => order.id !== ''); // Filter active IDs
 }
 
 /**
@@ -306,12 +326,16 @@ export async function addOrderToSheet(
   targetRowNum?: number
 ): Promise<void> {
   const range = targetRowNum 
-    ? `${DEFAULT_SHEET_NAME}!A${targetRowNum}:R${targetRowNum}`
-    : `${DEFAULT_SHEET_NAME}!A:R`;
+    ? `${DEFAULT_SHEET_NAME}!A${targetRowNum}:T${targetRowNum}`
+    : `${DEFAULT_SHEET_NAME}!A:T`;
   
   const url = targetRowNum
     ? `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`
     : `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED`;
+
+  const serializedItems = order.deliveryAttempts && order.deliveryAttempts.length > 0
+    ? `${order.items}||DELIVERY_ATTEMPTS||${JSON.stringify(order.deliveryAttempts)}`
+    : order.items;
 
   const rowValues = [
     order.id,
@@ -322,7 +346,7 @@ export async function addOrderToSheet(
     formatDateTimeForSheets(order.checkEnd),
     formatDateTimeForSheets(order.deliveryStart),
     formatDateTimeForSheets(order.deliveryEnd),
-    order.items,
+    serializedItems,
     formatDateTimeForSheets(order.lastUpdated),
     order.customerName || '',
     order.packingListNo || '',
@@ -331,7 +355,9 @@ export async function addOrderToSheet(
     order.khanDistrict || '',
     order.cityProvince || '',
     order.assignedTo || '',
-    order.bu || ''
+    order.bu || '',
+    order.invoiceAmount || '',
+    formatDateTimeForSheets(order.soDate || order.lastUpdated || new Date().toISOString())
   ];
 
   const res = await fetch(url, {
@@ -369,8 +395,12 @@ export async function updateOrderInSheet(
 
   // Row number is rowIndex + 2 (headers at Row 1, indices are 0-based)
   const rowNum = rowIndex + 2;
-  const range = `${DEFAULT_SHEET_NAME}!A${rowNum}:R${rowNum}`;
+  const range = `${DEFAULT_SHEET_NAME}!A${rowNum}:T${rowNum}`;
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
+
+  const serializedItems = order.deliveryAttempts && order.deliveryAttempts.length > 0
+    ? `${order.items}||DELIVERY_ATTEMPTS||${JSON.stringify(order.deliveryAttempts)}`
+    : order.items;
 
   const rowValues = [
     order.id,
@@ -381,7 +411,7 @@ export async function updateOrderInSheet(
     formatDateTimeForSheets(order.checkEnd),
     formatDateTimeForSheets(order.deliveryStart),
     formatDateTimeForSheets(order.deliveryEnd),
-    order.items,
+    serializedItems,
     formatDateTimeForSheets(order.lastUpdated),
     order.customerName || '',
     order.packingListNo || '',
@@ -390,7 +420,9 @@ export async function updateOrderInSheet(
     order.khanDistrict || '',
     order.cityProvince || '',
     order.assignedTo || '',
-    order.bu || ''
+    order.bu || '',
+    order.invoiceAmount || '',
+    formatDateTimeForSheets(order.soDate || order.lastUpdated || new Date().toISOString())
   ];
 
   const res = await fetch(url, {
@@ -581,8 +613,8 @@ export async function saveUsersToSheet(accessToken: string, spreadsheetId: strin
  */
 export async function searchOrderSpreadsheets(accessToken: string): Promise<{ id: string; name: string }[]> {
   try {
-    const query = encodeURIComponent("mimeType='application/vnd.google-apps.spreadsheet' and name contains 'Order Fulfillment & Barcode Tracker' and trashed = false");
-    const url = `https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id,name)`;
+    const query = encodeURIComponent("mimeType='application/vnd.google-apps.spreadsheet' and (name contains 'Order' or name contains 'Inventory' or name contains 'Fulfillment' or name contains 'Barcode' or name contains 'ScanFlow' or name contains 'Tracker' or name contains 'Products' or name contains 'Database' or name contains 'Sheet') and trashed = false");
+    const url = `https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id,name)&pageSize=15`;
     
     const res = await fetch(url, {
       headers: {
@@ -605,5 +637,272 @@ export async function searchOrderSpreadsheets(accessToken: string): Promise<{ id
     return [];
   }
 }
+
+// --- Setup & Configuration registries in Google Sheets ---
+
+const SETUP_SHEETS = {
+  Customer_Registry: { title: 'Customer_Registry', header: ['Customer Name'] },
+  Districts_Khan: { title: 'Districts_Khan', header: ['District (Khan)'] },
+  Cities_Province: { title: 'Cities_Province', header: ['City / Province'] },
+  Business_Units: { title: 'Business_Units', header: ['Business Unit'] },
+  Packing_Units: { title: 'Packing_Units', header: ['Packing Unit'] },
+  Customer_Master: { title: 'Customer_Master', header: ['Customer Name', 'Default Khan/District', 'Default City/Province'] }
+};
+
+// Global in-memory cache map to deduplicate concurrent setup creation calls
+const activeSetupPromises = new Map<string, Promise<void>>();
+
+/**
+ * Ensures all 6 registry and master list sheet tabs exist in the connected Google Sheet.
+ */
+export async function ensureSetupSheetsExist(accessToken: string, spreadsheetId: string): Promise<void> {
+  const existingPromise = activeSetupPromises.get(spreadsheetId);
+  if (existingPromise) {
+    return existingPromise;
+  }
+
+  const promise = (async () => {
+    try {
+      const metaUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties`;
+      const res = await fetch(metaUrl, {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error?.message || 'Could not access spreadsheet for setup sheets initialization.');
+      }
+
+      const data = await res.json();
+      const sheets = data.sheets || [];
+      const existingTitles = new Set(sheets.map((s: any) => s.properties?.title));
+
+      const missingSheets = Object.values(SETUP_SHEETS).filter(s => !existingTitles.has(s.title));
+
+      if (missingSheets.length > 0) {
+        const batchUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`;
+        const batchBody = {
+          requests: missingSheets.map(s => ({
+            addSheet: {
+              properties: {
+                title: s.title,
+                gridProperties: {
+                  frozenRowCount: 1
+                }
+              }
+            }
+          }))
+        };
+
+        const addRes = await fetch(batchUrl, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(batchBody)
+        });
+
+        if (!addRes.ok) {
+          const errorData = await addRes.json().catch(() => ({}));
+          const reason = errorData.error?.message || 'Unknown error response';
+          if (reason.includes('already exists')) {
+            console.warn('One or more sheets already exists, ignoring:', reason);
+          } else {
+            throw new Error(`Failed to create setup sheets in your spreadsheet. Reason: ${reason}`);
+          }
+        }
+
+        // Write headers to newly created sheets
+        for (const sheet of missingSheets) {
+          const range = `${sheet.title}!A1:${String.fromCharCode(65 + sheet.header.length - 1)}1`;
+          const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
+          await fetch(url, {
+            method: 'PUT',
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ values: [sheet.header] })
+          });
+        }
+      }
+    } finally {
+      activeSetupPromises.delete(spreadsheetId);
+    }
+  })();
+
+  activeSetupPromises.set(spreadsheetId, promise);
+  return promise;
+}
+
+/**
+ * Fetches all setup registries and customer master from the connected Google Sheet.
+ */
+export async function fetchSetupDataFromSheet(accessToken: string, spreadsheetId: string) {
+  await ensureSetupSheetsExist(accessToken, spreadsheetId);
+
+  const ranges = [
+    'Customer_Registry!A2:A',
+    'Districts_Khan!A2:A',
+    'Cities_Province!A2:A',
+    'Business_Units!A2:A',
+    'Packing_Units!A2:A',
+    'Customer_Master!A2:C'
+  ];
+
+  const queryRanges = ranges.map(r => `ranges=${encodeURIComponent(r)}`).join('&');
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?${queryRanges}`;
+
+  const res = await fetch(url, {
+    headers: { 'Authorization': `Bearer ${accessToken}` }
+  });
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error?.message || 'Failed to fetch setup data from Google Sheet.');
+  }
+
+  const data = await res.json();
+  const valueRanges = data.valueRanges || [];
+
+  const parseStringList = (valRange: any): string[] => {
+    const rows = valRange?.values || [];
+    return rows.map((r: any) => String(r[0] || '').trim()).filter(Boolean);
+  };
+
+  const parseCustomerMasterList = (valRange: any): CustomerMaster[] => {
+    const rows = valRange?.values || [];
+    return rows.map((r: any) => ({
+      customerName: String(r[0] || '').trim(),
+      defaultKhan: String(r[1] || '').trim(),
+      defaultProvince: String(r[2] || '').trim()
+    })).filter((m: CustomerMaster) => m.customerName !== '');
+  };
+
+  return {
+    customers: parseStringList(valueRanges[0]),
+    khans: parseStringList(valueRanges[1]),
+    provinces: parseStringList(valueRanges[2]),
+    bus: parseStringList(valueRanges[3]),
+    packageUnits: parseStringList(valueRanges[4]),
+    customerMasters: parseCustomerMasterList(valueRanges[5])
+  };
+}
+
+/**
+ * Overwrites a single registry list in Google Sheets.
+ */
+export async function saveSetupRegistryToSheet(
+  accessToken: string,
+  spreadsheetId: string,
+  type: 'Customer_Registry' | 'Districts_Khan' | 'Cities_Province' | 'Business_Units' | 'Packing_Units',
+  items: string[]
+): Promise<void> {
+  await ensureSetupSheetsExist(accessToken, spreadsheetId);
+
+  // 1. Clear the existing items A2:A
+  const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(type + '!A2:A')}:clear`;
+  await fetch(clearUrl, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (items.length === 0) return;
+
+  // 2. Write the new items
+  const range = `${type}!A2:A${items.length + 1}`;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
+
+  const values = items.map(item => [item]);
+
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ values })
+  });
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error?.message || `Failed to sync ${type} to Google Sheet.`);
+  }
+}
+
+/**
+ * Overwrites the Customer Master list in Google Sheets.
+ */
+export async function saveSetupCustomerMastersToSheet(
+  accessToken: string,
+  spreadsheetId: string,
+  masters: CustomerMaster[]
+): Promise<void> {
+  const type = 'Customer_Master';
+  await ensureSetupSheetsExist(accessToken, spreadsheetId);
+
+  // 1. Clear existing items
+  const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(type + '!A2:C')}:clear`;
+  await fetch(clearUrl, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (masters.length === 0) return;
+
+  // 2. Write new items
+  const range = `${type}!A2:C${masters.length + 1}`;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
+
+  const values = masters.map(m => [m.customerName, m.defaultKhan, m.defaultProvince]);
+
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ values })
+  });
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error?.message || 'Failed to sync Customer Master list to Google Sheet.');
+  }
+}
+
+/**
+ * Overwrites all setup and config sheets in a batch/concurrent style.
+ */
+export async function saveAllSetupToSheets(
+  accessToken: string,
+  spreadsheetId: string,
+  data: {
+    customers: string[];
+    khans: string[];
+    provinces: string[];
+    bus: string[];
+    packageUnits: string[];
+    customerMasters: CustomerMaster[];
+  }
+): Promise<void> {
+  await ensureSetupSheetsExist(accessToken, spreadsheetId);
+  await Promise.all([
+    saveSetupRegistryToSheet(accessToken, spreadsheetId, 'Customer_Registry', data.customers),
+    saveSetupRegistryToSheet(accessToken, spreadsheetId, 'Districts_Khan', data.khans),
+    saveSetupRegistryToSheet(accessToken, spreadsheetId, 'Cities_Province', data.provinces),
+    saveSetupRegistryToSheet(accessToken, spreadsheetId, 'Business_Units', data.bus),
+    saveSetupRegistryToSheet(accessToken, spreadsheetId, 'Packing_Units', data.packageUnits),
+    saveSetupCustomerMastersToSheet(accessToken, spreadsheetId, data.customerMasters)
+  ]);
+}
+
 
 

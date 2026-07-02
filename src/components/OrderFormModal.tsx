@@ -6,7 +6,7 @@
 import { useState, FormEvent, useEffect } from 'react';
 import { X, Package, Info, QrCode, Clipboard, Camera, AlertCircle, Sparkles, Check } from 'lucide-react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
-import { CustomerMaster } from '../types';
+import { CustomerMaster, formatAccounting } from '../types';
 import { safeStorage } from '../lib/storage';
 
 const DEFAULT_CUSTOMER_MASTER: CustomerMaster[] = [
@@ -32,7 +32,8 @@ interface OrderFormModalProps {
     khanDistrict?: string,
     cityProvince?: string,
     assignedTo?: string,
-    bu?: string
+    bu?: string,
+    invoiceAmount?: string
   ) => Promise<void>;
 }
 
@@ -116,6 +117,7 @@ export function OrderFormModal({ isOpen, onClose, onAdd }: OrderFormModalProps) 
   const [packageQty, setPackageQty] = useState('');
   const [packageUnit, setPackageUnit] = useState('ctn');
   const [invoiceNumber, setInvoiceNumber] = useState('');
+  const [invoiceAmount, setInvoiceAmount] = useState('');
   const [khanDistrict, setKhanDistrict] = useState('');
   const [cityProvince, setCityProvince] = useState('');
   const [assignedTo, setAssignedTo] = useState('');
@@ -410,7 +412,8 @@ export function OrderFormModal({ isOpen, onClose, onAdd }: OrderFormModalProps) 
         khanDistrict,
         cityProvince,
         assignedTo,
-        bu
+        bu,
+        formatAccounting(invoiceAmount)
       );
 
       // Reset Form state
@@ -419,6 +422,7 @@ export function OrderFormModal({ isOpen, onClose, onAdd }: OrderFormModalProps) 
       setPackingListNo('');
       setPackageQty('');
       setInvoiceNumber('');
+      setInvoiceAmount('');
       setKhanDistrict('');
       setCityProvince('');
       setAssignedTo('');
@@ -647,6 +651,24 @@ export function OrderFormModal({ isOpen, onClose, onAdd }: OrderFormModalProps) 
                   <QrCode className="w-4 h-4" />
                   <span>Scan</span>
                 </button>
+              </div>
+            </div>
+
+            {/* Row 2 - Field 5.5: Invoice Amount */}
+            <div className="space-y-2 col-span-1">
+              <label className="block text-[11px] font-extrabold text-slate-500 uppercase tracking-widest font-sans">
+                Invoice Amount
+              </label>
+              <div className="flex rounded-xl overflow-hidden shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] border-2 border-slate-900 focus-within:ring-2 focus-within:ring-slate-900">
+                <input
+                  type="text"
+                  value={invoiceAmount}
+                  onChange={(e) => setInvoiceAmount(e.target.value)}
+                  onBlur={() => setInvoiceAmount(formatAccounting(invoiceAmount))}
+                  placeholder="Amount e.g. 10,000.00"
+                  className="w-full bg-slate-50 px-3 py-2 text-sm focus:bg-white outline-none font-bold placeholder:text-slate-400"
+                  disabled={isSubmitting}
+                />
               </div>
             </div>
 

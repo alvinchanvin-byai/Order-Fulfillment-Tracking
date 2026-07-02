@@ -12,8 +12,72 @@ import {
   CheckCircle,
   FileSpreadsheet
 } from 'lucide-react';
-import type { Order } from '../types';
+import { Order, formatAccounting } from '../types';
 import * as XLSX from 'xlsx';
+
+const getOrdinalSuffix = (num: number): string => {
+  const j = num % 10;
+  const k = num % 100;
+  if (j === 1 && k !== 11) {
+    return num + "st";
+  }
+  if (j === 2 && k !== 12) {
+    return num + "nd";
+  }
+  if (j === 3 && k !== 13) {
+    return num + "rd";
+  }
+  return num + "th";
+};
+
+const getFriendlyStatusLabel = (status: string): string => {
+  if (status.startsWith('DELIVERED_INCOMPLETE')) {
+    const match = status.match(/DELIVERED_INCOMPLETE_(\d+)/);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      return `${getOrdinalSuffix(num)}_Delivery Incomplete`;
+    }
+    return '1st_Delivery Incomplete';
+  }
+  if (status.startsWith('DELIVERED_SUCCESS')) {
+    const match = status.match(/DELIVERED_SUCCESS_(\d+)/);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      return `${getOrdinalSuffix(num)}_Delivery Success`;
+    }
+    return '1st_Delivery Success';
+  }
+  if (status.startsWith('DELIVERED_RETURN')) {
+    const match = status.match(/DELIVERED_RETURN_(\d+)/);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      return `${getOrdinalSuffix(num)}_Delivery Return`;
+    }
+    return '1st_Delivery Return';
+  }
+  if (status.startsWith('DELIVERY_STARTED')) {
+    const match = status.match(/DELIVERY_STARTED_(\d+)/);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      return `${getOrdinalSuffix(num)}_In Delivery`;
+    }
+    return 'In Delivery';
+  }
+
+  switch (status) {
+    case 'REGISTERED': return 'Order Registered';
+    case 'PENDING_PICKING': return 'Awaiting Picking';
+    case 'PICKING_STARTED': return 'Picking Started';
+    case 'READY_CHECKING': return 'Ready to Check';
+    case 'CHECKING_STARTED': return 'Checking Started';
+    case 'READY_DELIVERY': return 'Ready to Deliver';
+    case 'DELIVERY_STARTED': return 'In Delivery';
+    case 'DELIVERED_SUCCESS': return '1st_Delivery Success';
+    case 'DELIVERED_INCOMPLETE': return '1st_Delivery Incomplete';
+    case 'DELIVERED_RETURN': return '1st_Delivery Return';
+    default: return status;
+  }
+};
 
 interface ReportModuleProps {
   orders: Order[];
@@ -89,7 +153,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
 
   const renderStatusBadge = (status: string) => {
     let config = {
-      label: status,
+      label: getFriendlyStatusLabel(status),
       bgColor: 'bg-slate-50',
       textColor: 'text-slate-700',
       borderColor: 'border-slate-200',
@@ -97,7 +161,15 @@ export function ReportModule({ orders }: ReportModuleProps) {
       animateDot: false,
     };
 
-    switch (status) {
+    let baseStatus = status;
+    let attemptNum = 1;
+    const match = status.match(/^(DELIVERED_INCOMPLETE|DELIVERED_SUCCESS|DELIVERED_RETURN|DELIVERY_STARTED)_(\d+)$/);
+    if (match) {
+      baseStatus = match[1];
+      attemptNum = parseInt(match[2], 10);
+    }
+
+    switch (baseStatus) {
       case 'REGISTERED':
         config = {
           label: 'Order Registered',
@@ -159,46 +231,137 @@ export function ReportModule({ orders }: ReportModuleProps) {
         };
         break;
       case 'DELIVERY_STARTED':
-        config = {
-          label: 'In Delivery',
-          bgColor: 'bg-teal-50',
-          textColor: 'text-teal-800',
-          borderColor: 'border-teal-200',
-          dotColor: 'bg-teal-500',
-          animateDot: true,
-        };
+        if (attemptNum === 2) {
+          config = {
+            label: '2nd_In Delivery',
+            bgColor: 'bg-cyan-50',
+            textColor: 'text-cyan-800',
+            borderColor: 'border-cyan-200',
+            dotColor: 'bg-cyan-500',
+            animateDot: true,
+          };
+        } else if (attemptNum >= 3) {
+          config = {
+            label: '3rd_In Delivery',
+            bgColor: 'bg-violet-50',
+            textColor: 'text-violet-800',
+            borderColor: 'border-violet-200',
+            dotColor: 'bg-violet-500',
+            animateDot: true,
+          };
+        } else {
+          config = {
+            label: 'In Delivery',
+            bgColor: 'bg-teal-50',
+            textColor: 'text-teal-800',
+            borderColor: 'border-teal-200',
+            dotColor: 'bg-teal-500',
+            animateDot: true,
+          };
+        }
         break;
       case 'DELIVERED_SUCCESS':
-        config = {
-          label: 'Delivered - Success',
-          bgColor: 'bg-emerald-50',
-          textColor: 'text-emerald-850',
-          borderColor: 'border-emerald-250',
-          dotColor: 'bg-emerald-500',
-          animateDot: false,
-        };
+        if (attemptNum === 2) {
+          config = {
+            label: '2nd_Delivery Success',
+            bgColor: 'bg-teal-50',
+            textColor: 'text-teal-800',
+            borderColor: 'border-teal-200',
+            dotColor: 'bg-teal-500',
+            animateDot: false,
+          };
+        } else if (attemptNum >= 3) {
+          config = {
+            label: '3rd_Delivery Success',
+            bgColor: 'bg-cyan-50',
+            textColor: 'text-cyan-800',
+            borderColor: 'border-cyan-200',
+            dotColor: 'bg-cyan-500',
+            animateDot: false,
+          };
+        } else {
+          config = {
+            label: '1st_Delivery Success',
+            bgColor: 'bg-emerald-50',
+            textColor: 'text-emerald-800',
+            borderColor: 'border-emerald-200',
+            dotColor: 'bg-emerald-500',
+            animateDot: false,
+          };
+        }
         break;
       case 'DELIVERED_INCOMPLETE':
-        config = {
-          label: 'Delivered - Incomplete',
-          bgColor: 'bg-yellow-50',
-          textColor: 'text-yellow-850',
-          borderColor: 'border-yellow-250',
-          dotColor: 'bg-yellow-500',
-          animateDot: false,
-        };
+        if (attemptNum === 2) {
+          config = {
+            label: '2nd_Delivery Incomplete',
+            bgColor: 'bg-orange-50',
+            textColor: 'text-orange-800',
+            borderColor: 'border-orange-200',
+            dotColor: 'bg-orange-500',
+            animateDot: false,
+          };
+        } else if (attemptNum === 3) {
+          config = {
+            label: '3rd_Delivery Incomplete',
+            bgColor: 'bg-fuchsia-50',
+            textColor: 'text-fuchsia-800',
+            borderColor: 'border-fuchsia-200',
+            dotColor: 'bg-fuchsia-500',
+            animateDot: false,
+          };
+        } else if (attemptNum >= 4) {
+          config = {
+            label: '4th_Delivery Incomplete',
+            bgColor: 'bg-red-50',
+            textColor: 'text-red-800',
+            borderColor: 'border-red-200',
+            dotColor: 'bg-red-500',
+            animateDot: false,
+          };
+        } else {
+          config = {
+            label: '1st_Delivery Incomplete',
+            bgColor: 'bg-yellow-50',
+            textColor: 'text-yellow-800',
+            borderColor: 'border-yellow-200',
+            dotColor: 'bg-yellow-500',
+            animateDot: false,
+          };
+        }
         break;
       case 'DELIVERED_RETURN':
-        config = {
-          label: 'Delivered - Return',
-          bgColor: 'bg-rose-50',
-          textColor: 'text-rose-850',
-          borderColor: 'border-rose-250',
-          dotColor: 'bg-rose-500',
-          animateDot: false,
-        };
+        if (attemptNum === 2) {
+          config = {
+            label: '2nd_Delivery Return',
+            bgColor: 'bg-purple-50',
+            textColor: 'text-purple-800',
+            borderColor: 'border-purple-200',
+            dotColor: 'bg-purple-500',
+            animateDot: false,
+          };
+        } else if (attemptNum >= 3) {
+          config = {
+            label: '3rd_Delivery Return',
+            bgColor: 'bg-indigo-50',
+            textColor: 'text-indigo-800',
+            borderColor: 'border-indigo-200',
+            dotColor: 'bg-indigo-500',
+            animateDot: false,
+          };
+        } else {
+          config = {
+            label: '1st_Delivery Return',
+            bgColor: 'bg-rose-50',
+            textColor: 'text-rose-800',
+            borderColor: 'border-rose-200',
+            dotColor: 'bg-rose-500',
+            animateDot: false,
+          };
+        }
         break;
     }
+
+    config.label = getFriendlyStatusLabel(status);
 
     return (
       <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-extrabold border-2 rounded-lg shadow-sm transition-all duration-150 tracking-wider ${config.bgColor} ${config.textColor} ${config.borderColor}`}>
@@ -256,6 +419,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
         khan: order.khanDistrict || 'None',
         cityProvince: order.cityProvince || 'None',
         packingListNo: order.packingListNo || 'None',
+        invoiceAmount: formatAccounting(order.invoiceAmount) || 'None',
         totalPackage: order.totalPackage || 'None',
         startedBy: order.assignedTo || 'Unassigned',
         bu: order.bu || 'None',
@@ -280,6 +444,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
         khan: order.khanDistrict || 'None',
         cityProvince: order.cityProvince || 'None',
         packingListNo: order.packingListNo || 'None',
+        invoiceAmount: formatAccounting(order.invoiceAmount) || 'None',
         totalPackage: order.totalPackage || 'None',
         startedBy: order.assignedTo || 'Unassigned',
         bu: order.bu || 'None',
@@ -304,6 +469,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
         khan: order.khanDistrict || 'None',
         cityProvince: order.cityProvince || 'None',
         packingListNo: order.packingListNo || 'None',
+        invoiceAmount: formatAccounting(order.invoiceAmount) || 'None',
         totalPackage: order.totalPackage || 'None',
         startedBy: order.assignedTo || 'Unassigned',
         bu: order.bu || 'None',
@@ -334,6 +500,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
           cityProvince: order.cityProvince || 'None',
           packingListNo: order.packingListNo || 'None',
           invoiceNo: order.invoiceNumber || 'None',
+          invoiceAmount: formatAccounting(order.invoiceAmount) || 'None',
           totalPackage: order.totalPackage || 'None',
           pickStart,
           pickEnd,
@@ -347,36 +514,70 @@ export function ReportModule({ orders }: ReportModuleProps) {
 
   // Generate Master report rows
   const masterRows = useMemo(() => {
-    return processedData.map(order => {
-      const date = formatDateOnly(order.lastUpdated);
+    const rows: any[] = [];
+    processedData.forEach(order => {
       const pickStart = formatDateTime(order.pickStart);
       const pickEnd = formatDateTime(order.pickEnd);
       const checkStart = formatDateTime(order.checkStart);
       const checkEnd = formatDateTime(order.checkEnd);
-      const deliveryStart = formatDateTime(order.deliveryStart);
-      const deliveryEnd = formatDateTime(order.deliveryEnd);
       
-      return {
-        status: order.status,
-        date,
-        orderId: order.id,
-        customerName: order.customerName || 'None',
-        khan: order.khanDistrict || 'None',
-        cityProvince: order.cityProvince || 'None',
-        packingListNo: order.packingListNo || 'None',
-        invoiceNo: order.invoiceNumber || 'None',
-        totalPackage: order.totalPackage || 'None',
-        pickStart,
-        pickEnd,
-        pickerBy: order.assignedTo || 'Unassigned',
-        checkStart,
-        checkEnd,
-        checkerBy: order.assignedTo || 'Unassigned',
-        deliveryStart,
-        deliveryEnd,
-        deliveryBy: order.assignedTo || 'Unassigned'
-      };
+      const attempts = order.deliveryAttempts || [];
+      if (attempts.length === 0) {
+        const date = formatDateOnly(order.soDate || order.lastUpdated);
+        const deliveryStart = formatDateTime(order.deliveryStart);
+        const deliveryEnd = formatDateTime(order.deliveryEnd);
+        rows.push({
+          status: order.status,
+          date,
+          orderId: order.id,
+          customerName: order.customerName || 'None',
+          khan: order.khanDistrict || 'None',
+          cityProvince: order.cityProvince || 'None',
+          packingListNo: order.packingListNo || 'None',
+          invoiceNo: order.invoiceNumber || 'None',
+          invoiceAmount: formatAccounting(order.invoiceAmount) || 'None',
+          totalPackage: order.totalPackage || 'None',
+          pickStart,
+          pickEnd,
+          pickerBy: order.assignedTo || 'Unassigned',
+          checkStart,
+          checkEnd,
+          checkerBy: order.assignedTo || 'Unassigned',
+          deliveryStart,
+          deliveryEnd,
+          deliveryBy: order.assignedTo || 'Unassigned'
+        });
+      } else {
+        attempts.forEach((attempt, attemptIdx) => {
+          const date = formatDateOnly(order.soDate || order.lastUpdated);
+          const deliveryStart = formatDateTime(attempt.deliveryStart);
+          const deliveryEnd = formatDateTime(attempt.deliveryEnd);
+          const attemptNum = attempt.attemptNumber || (attemptIdx + 1);
+          rows.push({
+            status: `${attempt.status}_${attemptNum}`,
+            date,
+            orderId: order.id,
+            customerName: order.customerName || 'None',
+            khan: order.khanDistrict || 'None',
+            cityProvince: order.cityProvince || 'None',
+            packingListNo: order.packingListNo || 'None',
+            invoiceNo: order.invoiceNumber || 'None',
+            invoiceAmount: formatAccounting(order.invoiceAmount) || 'None',
+            totalPackage: order.totalPackage || 'None',
+            pickStart,
+            pickEnd,
+            pickerBy: order.assignedTo || 'Unassigned',
+            checkStart,
+            checkEnd,
+            checkerBy: order.assignedTo || 'Unassigned',
+            deliveryStart,
+            deliveryEnd,
+            deliveryBy: attempt.assignedTo || order.assignedTo || 'Unassigned'
+          });
+        });
+      }
     });
+    return rows;
   }, [processedData]);
 
   // Excel / CSV Export Trigger
@@ -393,6 +594,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
         'Khan': row.khan,
         'City/Province': row.cityProvince,
         'Packing List #': row.packingListNo,
+        'Invoice Amount': row.invoiceAmount,
         'Total Package': row.totalPackage,
         'Started By': row.startedBy,
         'BU': row.bu,
@@ -409,6 +611,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
         'Khan': row.khan,
         'City/Province': row.cityProvince,
         'Packing List #': row.packingListNo,
+        'Invoice Amount': row.invoiceAmount,
         'Total Package': row.totalPackage,
         'Started By': row.startedBy,
         'BU': row.bu,
@@ -425,6 +628,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
         'Khan': row.khan,
         'City/Province': row.cityProvince,
         'Packing List #': row.packingListNo,
+        'Invoice Amount': row.invoiceAmount,
         'Total Package': row.totalPackage,
         'Started By': row.startedBy,
         'BU': row.bu,
@@ -435,7 +639,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
     } else if (activeReport === 'waiting_delivery') {
       fileName = 'Waiting_Delivery_Report';
       sheetData = waitingDeliveryRows.map(row => ({
-        'Status': row.status,
+        'Status': getFriendlyStatusLabel(row.status),
         'Date': row.date,
         'SO #': row.orderId,
         'Customer Name': row.customerName,
@@ -443,6 +647,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
         'City/Province': row.cityProvince,
         'Packing List #': row.packingListNo,
         'Invoice #': row.invoiceNo,
+        'Invoice Amount': row.invoiceAmount,
         'Total Package': row.totalPackage,
         'Pick Start Date/Time': row.pickStart,
         'Pick End Date/Time': row.pickEnd,
@@ -454,7 +659,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
     } else if (activeReport === 'master') {
       fileName = 'Master_Fulfillment_Report';
       sheetData = masterRows.map(row => ({
-        'Status': row.status,
+        'Status': getFriendlyStatusLabel(row.status),
         'Date': row.date,
         'SO #': row.orderId,
         'Customer Name': row.customerName,
@@ -462,6 +667,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
         'City/Province': row.cityProvince,
         'Packing List #': row.packingListNo,
         'Invoice #': row.invoiceNo,
+        'Invoice Amount': row.invoiceAmount,
         'Total Package': row.totalPackage,
         'Pick Start Date/Time': row.pickStart,
         'Pick End Date/Time': row.pickEnd,
@@ -628,6 +834,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans text-stone-200">Khan</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans text-stone-200">City/Province</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Packing List #</th>
+                  <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Invoice Amount</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Total Package</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Started By</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">BU</th>
@@ -639,7 +846,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
               <tbody className="bg-white divide-y divide-slate-100 font-sans text-xs">
                 {pickingRows.length === 0 ? (
                   <tr>
-                    <td colSpan={12} className="px-4 py-8 text-center italic text-slate-400 font-medium">
+                    <td colSpan={13} className="px-4 py-8 text-center italic text-slate-400 font-medium">
                       No records match the applied report filter.
                     </td>
                   </tr>
@@ -652,6 +859,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
                       <td className="px-3.5 py-2.5 text-slate-600 whitespace-nowrap font-medium">{row.khan}</td>
                       <td className="px-3.5 py-2.5 text-slate-600 whitespace-nowrap font-medium">{row.cityProvince}</td>
                       <td className="px-3.5 py-2.5 font-mono text-slate-700 whitespace-nowrap font-medium">{row.packingListNo}</td>
+                      <td className="px-3.5 py-2.5 font-semibold text-slate-800 whitespace-nowrap">{row.invoiceAmount}</td>
                       <td className="px-3.5 py-2.5 whitespace-nowrap font-bold text-indigo-700">{row.totalPackage}</td>
                       <td className="px-3.5 py-2.5 font-semibold text-slate-800 whitespace-nowrap">{row.startedBy}</td>
                       <td className="px-3.5 py-2.5 font-mono whitespace-nowrap font-bold text-slate-500">{row.bu}</td>
@@ -683,6 +891,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans text-stone-200">Khan</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans text-stone-200">City/Province</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Packing List #</th>
+                  <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Invoice Amount</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Total Package</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Started By</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">BU</th>
@@ -694,7 +903,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
               <tbody className="bg-white divide-y divide-slate-100 font-sans text-xs">
                 {checkingRows.length === 0 ? (
                   <tr>
-                    <td colSpan={12} className="px-4 py-8 text-center italic text-slate-400 font-medium">
+                    <td colSpan={13} className="px-4 py-8 text-center italic text-slate-400 font-medium">
                       No records match the applied report filter.
                     </td>
                   </tr>
@@ -707,6 +916,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
                       <td className="px-3.5 py-2.5 text-slate-600 whitespace-nowrap font-medium">{row.khan}</td>
                       <td className="px-3.5 py-2.5 text-slate-600 whitespace-nowrap font-medium">{row.cityProvince}</td>
                       <td className="px-3.5 py-2.5 font-mono text-slate-700 whitespace-nowrap font-medium">{row.packingListNo}</td>
+                      <td className="px-3.5 py-2.5 font-semibold text-slate-800 whitespace-nowrap">{row.invoiceAmount}</td>
                       <td className="px-3.5 py-2.5 whitespace-nowrap font-bold text-indigo-700">{row.totalPackage}</td>
                       <td className="px-3.5 py-2.5 font-semibold text-slate-800 whitespace-nowrap">{row.startedBy}</td>
                       <td className="px-3.5 py-2.5 font-mono whitespace-nowrap font-bold text-slate-500">{row.bu}</td>
@@ -795,6 +1005,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">City/Province</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Packing List #</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Invoice #</th>
+                  <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Invoice Amount</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Total Package</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans text-sky-200">Pick Start Date/Time</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans text-sky-200">Pick End Date/Time</th>
@@ -807,7 +1018,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
               <tbody className="bg-white divide-y divide-slate-100 font-sans text-xs">
                 {waitingDeliveryRows.length === 0 ? (
                   <tr>
-                    <td colSpan={15} className="px-4 py-8 text-center italic text-slate-400 font-medium">
+                    <td colSpan={16} className="px-4 py-8 text-center italic text-slate-400 font-medium">
                       No records match the applied report filter.
                     </td>
                   </tr>
@@ -824,6 +1035,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
                       <td className="px-3.5 py-2.5 text-slate-600 whitespace-nowrap font-medium">{row.cityProvince}</td>
                       <td className="px-3.5 py-2.5 font-mono text-slate-700 whitespace-nowrap font-medium">{row.packingListNo}</td>
                       <td className="px-3.5 py-2.5 font-mono text-slate-700 whitespace-nowrap font-medium">{row.invoiceNo}</td>
+                      <td className="px-3.5 py-2.5 font-mono text-slate-700 whitespace-nowrap font-semibold">{row.invoiceAmount}</td>
                       <td className="px-3.5 py-2.5 whitespace-nowrap font-bold text-indigo-700">{row.totalPackage}</td>
                       <td className="px-3.5 py-2.5 font-mono text-slate-400 whitespace-nowrap text-[10px]">{row.pickStart}</td>
                       <td className="px-3.5 py-2.5 font-mono text-slate-400 whitespace-nowrap text-[10px]">{row.pickEnd}</td>
@@ -850,6 +1062,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
                   <th className="px-3 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">City/Province</th>
                   <th className="px-3 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Packing List #</th>
                   <th className="px-3 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Invoice #</th>
+                  <th className="px-3 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Invoice Amount</th>
                   <th className="px-3 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Total Package</th>
                   <th className="px-3 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans text-sky-200">Pick Start</th>
                   <th className="px-3 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans text-sky-200">Pick End</th>
@@ -865,7 +1078,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
               <tbody className="bg-white divide-y divide-slate-100 font-sans text-xs">
                 {masterRows.length === 0 ? (
                   <tr>
-                    <td colSpan={18} className="px-4 py-8 text-center italic text-slate-400 font-medium">
+                    <td colSpan={19} className="px-4 py-8 text-center italic text-slate-400 font-medium">
                       No records match the applied report filter.
                     </td>
                   </tr>
@@ -882,6 +1095,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
                       <td className="px-3 py-2 text-slate-600 whitespace-nowrap font-medium">{row.cityProvince}</td>
                       <td className="px-3 py-2 font-mono text-slate-700 whitespace-nowrap font-medium">{row.packingListNo}</td>
                       <td className="px-3 py-2 font-mono text-slate-700 whitespace-nowrap font-medium">{row.invoiceNo}</td>
+                      <td className="px-3 py-2 font-mono text-slate-700 whitespace-nowrap font-semibold">{row.invoiceAmount}</td>
                       <td className="px-3 py-2 whitespace-nowrap font-bold text-indigo-700">{row.totalPackage}</td>
                       <td className="px-3 py-2 font-mono text-slate-400 whitespace-nowrap text-[10px]">{row.pickStart}</td>
                       <td className="px-3 py-2 font-mono text-slate-400 whitespace-nowrap text-[10px]">{row.pickEnd}</td>

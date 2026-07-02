@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   Clock,
   AlertTriangle,
+  AlertCircle,
   Play,
   ArrowRight,
   UserCheck,
@@ -40,7 +41,8 @@ import {
   User,
   Calendar,
   Receipt,
-  Clipboard
+  Clipboard,
+  DollarSign
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -56,7 +58,8 @@ import {
   ensureOrdersSheetExists,
   setCachedToken,
   fetchUsersFromSheet,
-  saveUsersToSheet
+  saveUsersToSheet,
+  searchOrderSpreadsheets
 } from './lib/sheets';
 import { safeStorage } from './lib/storage';
 
@@ -69,7 +72,7 @@ import { SetupModule } from './components/SetupModule';
 import { ReportModule } from './components/ReportModule';
 import { UsersModule } from './components/UsersModule';
 import { LoginScreen } from './components/LoginScreen';
-import { UserCredentials } from './types';
+import { UserCredentials, formatAccounting } from './types';
 
 export default function App() {
   // Auth state
@@ -97,6 +100,9 @@ export default function App() {
   const [spreadsheetName, setSpreadsheetName] = useState<string>('');
   const [isConfiguringSheet, setIsConfiguringSheet] = useState(false);
   const [sheetIdInput, setSheetIdInput] = useState('');
+  const [discoveredSheets, setDiscoveredSheets] = useState<{ id: string; name: string }[]>([]);
+  const [searchingSheets, setSearchingSheets] = useState(false);
+  const [createTitleInput, setCreateTitleInput] = useState('Product Inventory Database');
 
   // Orders state
   const [orders, setOrders] = useState<Order[]>(() => {
@@ -114,7 +120,7 @@ export default function App() {
     return [];
   });
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
-  const [activeFilter, setActiveFilter] = useState<'All' | 'Registered' | 'Picking' | 'Checking' | 'Waiting Delivery' | 'Delivery' | 'Completed'>('All');
+  const [activeFilter, setActiveFilter] = useState<'All' | 'Registered' | 'Picking' | 'Checking' | 'Waiting Delivery' | 'Delivery' | 'Completed' | 'Incomplete'>('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
 
@@ -242,7 +248,7 @@ export default function App() {
   }, [activeFilter]);
 
   // Helper to determine if a filter/tab is allowed for the active user
-  const isFilterTabAllowed = (tab: 'All' | 'Registered' | 'Picking' | 'Checking' | 'Waiting Delivery' | 'Delivery' | 'Completed'): boolean => {
+  const isFilterTabAllowed = (tab: 'All' | 'Registered' | 'Picking' | 'Checking' | 'Waiting Delivery' | 'Delivery' | 'Completed' | 'Incomplete'): boolean => {
     if (!activeSystemUser) return true;
     if (activeSystemUser.role === 'admin') return true;
 
@@ -254,6 +260,7 @@ export default function App() {
     if (tab === 'Waiting Delivery' && !allowed.includes('delivery')) return false;
     if (tab === 'Delivery' && !allowed.includes('delivery')) return false;
     if (tab === 'Completed' && !allowed.includes('delivery')) return false;
+    if (tab === 'Incomplete' && !allowed.includes('delivery')) return false;
 
     return true;
   };
@@ -271,12 +278,13 @@ export default function App() {
         if (tab === 'Waiting Delivery' && !allowed.includes('delivery')) return false;
         if (tab === 'Delivery' && !allowed.includes('delivery')) return false;
         if (tab === 'Completed' && !allowed.includes('delivery')) return false;
+        if (tab === 'Incomplete' && !allowed.includes('delivery')) return false;
         return true;
       };
 
       if (!isAllowed(activeFilter)) {
-        const tabs: ('All' | 'Registered' | 'Picking' | 'Checking' | 'Waiting Delivery' | 'Delivery' | 'Completed')[] = [
-          'All', 'Registered', 'Picking', 'Checking', 'Waiting Delivery', 'Delivery', 'Completed'
+        const tabs: ('All' | 'Registered' | 'Picking' | 'Checking' | 'Waiting Delivery' | 'Delivery' | 'Completed' | 'Incomplete')[] = [
+          'All', 'Registered', 'Picking', 'Checking', 'Waiting Delivery', 'Delivery', 'Completed', 'Incomplete'
         ];
         const firstAllowed = tabs.find(t => isAllowed(t));
         if (firstAllowed) {
@@ -325,19 +333,20 @@ export default function App() {
   };
 
   // Create or Connect Google Sheets
-  const handleCreateNewSheet = async () => {
+  const handleCreateNewSheet = async (customTitle?: string) => {
     if (!token) return;
     setIsLoadingOrders(true);
+    const finalTitle = (customTitle || 'Order Fulfillment & Barcode Tracker').trim();
     try {
-      const newSheet = await createOrderSpreadsheet(token);
+      const newSheet = await createOrderSpreadsheet(token, finalTitle);
       setSpreadsheetId(newSheet.id);
       setSpreadsheetUrl(newSheet.url);
-      setSpreadsheetName('Order Fulfillment & Barcode Tracker');
+      setSpreadsheetName(finalTitle);
 
       const config: SpreadsheetConfig = {
         spreadsheetId: newSheet.id,
         spreadsheetUrl: newSheet.url,
-        sheetName: 'Order Fulfillment & Barcode Tracker'
+        sheetName: finalTitle
       };
       safeStorage.setItem('order_tracker_sheet_config', JSON.stringify(config));
       setIsConfiguringSheet(false);
@@ -376,6 +385,25 @@ export default function App() {
       setIsLoadingOrders(false);
     }
   };
+
+  const triggerSearchSheets = async () => {
+    if (!token) return;
+    setSearchingSheets(true);
+    try {
+      const sheets = await searchOrderSpreadsheets(token);
+      setDiscoveredSheets(sheets);
+    } catch (err) {
+      console.error('Failed to search spreadsheets in Drive:', err);
+    } finally {
+      setSearchingSheets(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isConfiguringSheet && token) {
+      triggerSearchSheets();
+    }
+  }, [isConfiguringSheet, token]);
 
   const isAuthError = (err: any): boolean => {
     if (!err || !err.message) return false;
@@ -508,7 +536,8 @@ export default function App() {
     khanDistrict?: string,
     cityProvince?: string,
     assignedTo?: string,
-    bu?: string
+    bu?: string,
+    invoiceAmount?: string
   ) => {
     if (activeSystemUser?.role === 'view') {
       alert("Permission Denied: Viewer accounts are restricted from registering new orders.");
@@ -540,7 +569,9 @@ export default function App() {
       khanDistrict: khanDistrict || '',
       cityProvince: cityProvince || '',
       assignedTo: assignedTo || '',
-      bu: bu || ''
+      bu: bu || '',
+      invoiceAmount: invoiceAmount || '',
+      soDate: new Date().toISOString()
     };
 
     const nextRow = orders.length + 2;
@@ -778,11 +809,31 @@ export default function App() {
     if (outcome === 'Incomplete') nextStage = 'DELIVERED_INCOMPLETE';
     if (outcome === 'Return') nextStage = 'DELIVERED_RETURN';
 
+    const attempts = [...(order.deliveryAttempts || [])];
+    if (attempts.length === 0) {
+      attempts.push({
+        attemptNumber: 1,
+        deliveryStart: order.deliveryStart || timestamp,
+        deliveryEnd: timestamp,
+        status: nextStage,
+        assignedTo: order.assignedTo || ''
+      });
+    } else {
+      const lastIdx = attempts.length - 1;
+      attempts[lastIdx] = {
+        ...attempts[lastIdx],
+        deliveryEnd: timestamp,
+        status: nextStage,
+        assignedTo: order.assignedTo || attempts[lastIdx].assignedTo || ''
+      };
+    }
+
     const updatedOrder: Order = {
       ...order,
       status: nextStage,
       deliveryEnd: timestamp,
-      lastUpdated: timestamp
+      lastUpdated: timestamp,
+      deliveryAttempts: attempts
     };
 
     try {
@@ -857,6 +908,12 @@ export default function App() {
           color: 'bg-rose-500 hover:bg-rose-600 text-white border-slate-900',
           icon: CheckCircle2 
         };
+      case 'DELIVERED_INCOMPLETE':
+        return { 
+          label: 'Start Delivery', 
+          color: 'bg-teal-400 hover:bg-teal-500 text-slate-900 border-slate-900',
+          icon: Truck 
+        };
       default:
         return null;
     }
@@ -919,6 +976,41 @@ export default function App() {
       if (['PICKING_STARTED', 'CHECKING_STARTED', 'DELIVERY_STARTED'].includes(nextStage) && activeSystemUser?.username) {
         updatedOrder.assignedTo = activeSystemUser.username;
       }
+      
+      // Handle delivery attempts during manual override
+      if (nextStage === 'DELIVERY_STARTED') {
+        const prevAttempts = order.deliveryAttempts || [];
+        updatedOrder.deliveryAttempts = [
+          ...prevAttempts,
+          {
+            attemptNumber: prevAttempts.length + 1,
+            deliveryStart: timestamp,
+            deliveryEnd: '',
+            status: 'DELIVERY_STARTED',
+            assignedTo: activeSystemUser?.username || order.assignedTo || ''
+          }
+        ];
+      } else if (['DELIVERED_SUCCESS', 'DELIVERED_INCOMPLETE', 'DELIVERED_RETURN'].includes(nextStage)) {
+        const attempts = [...(order.deliveryAttempts || [])];
+        if (attempts.length === 0) {
+          attempts.push({
+            attemptNumber: 1,
+            deliveryStart: order.deliveryStart || timestamp,
+            deliveryEnd: timestamp,
+            status: nextStage,
+            assignedTo: order.assignedTo || ''
+          });
+        } else {
+          const lastIdx = attempts.length - 1;
+          attempts[lastIdx] = {
+            ...attempts[lastIdx],
+            deliveryEnd: timestamp,
+            status: nextStage,
+            assignedTo: order.assignedTo || attempts[lastIdx].assignedTo || ''
+          };
+        }
+        updatedOrder.deliveryAttempts = attempts;
+      }
       actionDescr = `Manual progression override to ${getStageLabel(nextStage)}`;
     } else {
       switch (order.status) {
@@ -965,6 +1057,15 @@ export default function App() {
             updatedOrder.assignedTo = activeSystemUser.username;
           }
           actionDescr = 'Delivery Dispatch Started';
+          updatedOrder.deliveryAttempts = [
+            {
+              attemptNumber: 1,
+              deliveryStart: timestamp,
+              deliveryEnd: '',
+              status: 'DELIVERY_STARTED',
+              assignedTo: activeSystemUser?.username || order.assignedTo || ''
+            }
+          ];
           break;
 
         case 'DELIVERY_STARTED':
@@ -973,6 +1074,28 @@ export default function App() {
           setIsDeliveryOutcomeOpen(true);
           setIsLoadingOrders(false);
           return;
+
+        case 'DELIVERED_INCOMPLETE':
+          nextStage = 'DELIVERY_STARTED';
+          updatedOrder.status = nextStage;
+          updatedOrder.deliveryStart = timestamp;
+          updatedOrder.deliveryEnd = ''; // Clear delivery end
+          if (activeSystemUser?.username) {
+            updatedOrder.assignedTo = activeSystemUser.username;
+          }
+          actionDescr = 'Re-delivery Dispatch Started';
+          const prevAttempts = order.deliveryAttempts || [];
+          updatedOrder.deliveryAttempts = [
+            ...prevAttempts,
+            {
+              attemptNumber: prevAttempts.length + 1,
+              deliveryStart: timestamp,
+              deliveryEnd: '',
+              status: 'DELIVERY_STARTED',
+              assignedTo: activeSystemUser?.username || order.assignedTo || ''
+            }
+          ];
+          break;
 
         default:
           setIsLoadingOrders(false);
@@ -1192,8 +1315,40 @@ export default function App() {
   };
 
   // Helper Labels & badges
-  const getStageLabel = (stage: OrderStage): string => {
-    switch (stage) {
+  const getStageLabel = (stage: OrderStage, order?: Order): string => {
+    const getOrdinalSuffix = (num: number): string => {
+      const j = num % 10;
+      const k = num % 100;
+      if (j === 1 && k !== 11) return num + "st";
+      if (j === 2 && k !== 12) return num + "nd";
+      if (j === 3 && k !== 13) return num + "rd";
+      return num + "th";
+    };
+
+    if (order && ['DELIVERED_SUCCESS', 'DELIVERED_INCOMPLETE', 'DELIVERED_RETURN', 'DELIVERY_STARTED'].includes(stage)) {
+      const attempts = order.deliveryAttempts || [];
+      if (attempts.length > 0) {
+        const lastAttempt = attempts[attempts.length - 1];
+        const num = lastAttempt.attemptNumber || attempts.length;
+        if (stage === 'DELIVERED_INCOMPLETE') return `${getOrdinalSuffix(num)}_Delivery Incomplete`;
+        if (stage === 'DELIVERED_SUCCESS') return `${getOrdinalSuffix(num)}_Delivery Success`;
+        if (stage === 'DELIVERED_RETURN') return `${getOrdinalSuffix(num)}_Delivery Return`;
+        if (stage === 'DELIVERY_STARTED') return `${getOrdinalSuffix(num)}_In Delivery`;
+      } else {
+        if (stage === 'DELIVERED_INCOMPLETE') return '1st_Delivery Incomplete';
+        if (stage === 'DELIVERED_SUCCESS') return '1st_Delivery Success';
+        if (stage === 'DELIVERED_RETURN') return '1st_Delivery Return';
+        if (stage === 'DELIVERY_STARTED') return '1st_In Delivery';
+      }
+    } else if (stage === 'DELIVERED_INCOMPLETE') {
+      return '1st_Delivery Incomplete';
+    } else if (stage === 'DELIVERED_SUCCESS') {
+      return '1st_Delivery Success';
+    } else if (stage === 'DELIVERED_RETURN') {
+      return '1st_Delivery Return';
+    }
+
+    switch (stage as string) {
       case 'REGISTERED': return 'Order Registered';
       case 'PENDING_PICKING': return 'Awaiting Picking';
       case 'PICKING_STARTED': return 'Picking Started';
@@ -1208,8 +1363,13 @@ export default function App() {
     }
   };
 
-  const getStageBadgeColor = (stage: OrderStage): string => {
-    switch (stage) {
+  const getStageBadgeColor = (stage: OrderStage, order?: Order): string => {
+    let attemptNum = 1;
+    if (order && order.deliveryAttempts && order.deliveryAttempts.length > 0) {
+      attemptNum = order.deliveryAttempts.length;
+    }
+
+    switch (stage as string) {
       case 'REGISTERED':
         return 'bg-sky-50 text-sky-950 border-2 border-slate-900';
       case 'PENDING_PICKING':
@@ -1223,12 +1383,21 @@ export default function App() {
       case 'READY_DELIVERY':
         return 'bg-indigo-100 text-indigo-950 border-2 border-slate-900';
       case 'DELIVERY_STARTED':
+        if (attemptNum === 2) return 'bg-cyan-100 text-cyan-950 border-2 border-slate-900';
+        if (attemptNum >= 3) return 'bg-violet-100 text-violet-950 border-2 border-slate-900';
         return 'bg-teal-100 text-teal-950 border-2 border-slate-900';
       case 'DELIVERED_SUCCESS':
+        if (attemptNum === 2) return 'bg-emerald-200 text-emerald-950 border-2 border-slate-900';
+        if (attemptNum >= 3) return 'bg-emerald-300 text-emerald-950 border-2 border-slate-900';
         return 'bg-emerald-100 text-emerald-950 border-2 border-slate-900';
       case 'DELIVERED_INCOMPLETE':
+        if (attemptNum === 2) return 'bg-orange-100 text-orange-950 border-2 border-slate-900';
+        if (attemptNum === 3) return 'bg-fuchsia-100 text-fuchsia-950 border-2 border-slate-900';
+        if (attemptNum >= 4) return 'bg-red-100 text-red-950 border-2 border-slate-900';
         return 'bg-yellow-100 text-yellow-950 border-2 border-slate-900';
       case 'DELIVERED_RETURN':
+        if (attemptNum === 2) return 'bg-purple-100 text-purple-950 border-2 border-slate-900';
+        if (attemptNum >= 3) return 'bg-indigo-100 text-indigo-950 border-2 border-slate-900';
         return 'bg-rose-100 text-rose-950 border-2 border-slate-900';
       default:
         return 'bg-slate-100 text-slate-700 border-2 border-slate-900';
@@ -1282,6 +1451,7 @@ export default function App() {
     if (activeFilter === 'Waiting Delivery' && o.status !== 'READY_DELIVERY') return false;
     if (activeFilter === 'Delivery' && o.status !== 'DELIVERY_STARTED') return false;
     if (activeFilter === 'Completed' && !o.status.startsWith('DELIVERED')) return false;
+    if (activeFilter === 'Incomplete' && o.status !== 'DELIVERED_INCOMPLETE') return false;
 
     // Search query
     if (searchQuery) {
@@ -1292,7 +1462,7 @@ export default function App() {
   });
 
   const renderKpiSection = () => {
-    const handleKpiClick = (filter: 'All' | 'Registered' | 'Picking' | 'Checking' | 'Waiting Delivery' | 'Delivery' | 'Completed') => {
+    const handleKpiClick = (filter: 'All' | 'Registered' | 'Picking' | 'Checking' | 'Waiting Delivery' | 'Delivery' | 'Completed' | 'Incomplete') => {
       setActiveFilter(filter);
       setCurrentTab('registry');
       setScannerActive(false);
@@ -1464,10 +1634,28 @@ export default function App() {
 
         {totalCompleted > 0 && (
           <div className="pt-3 border-t border-slate-100">
-            <div className="flex flex-wrap items-center justify-between font-mono p-2.5 bg-slate-50 rounded-xl border-2 border-slate-900 text-[10px] gap-2">
-              <span className="text-emerald-600 font-bold flex items-center gap-1">✔ Success: {successDeliveries}</span>
-              <span className="text-amber-600 font-bold flex items-center gap-1">⚠ Incomplete: {incompleteDeliveries}</span>
-              <span className="text-rose-600 font-bold flex items-center gap-1">↺ Return: {returnedDeliveries}</span>
+            <div className="flex flex-wrap items-center justify-between font-mono p-1.5 bg-slate-50 rounded-xl border-2 border-slate-900 text-[10px] gap-2">
+              <button
+                type="button"
+                onClick={() => handleKpiClick('Completed')}
+                className="text-emerald-600 hover:bg-emerald-50 px-2 py-1 rounded-lg font-bold flex items-center gap-1 transition-all cursor-pointer border border-transparent hover:border-emerald-200"
+              >
+                ✔ Success: {successDeliveries}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleKpiClick('Incomplete')}
+                className="text-amber-600 hover:bg-amber-50 px-2 py-1 rounded-lg font-bold flex items-center gap-1 transition-all cursor-pointer border border-transparent hover:border-amber-200"
+              >
+                ⚠ Incomplete: {incompleteDeliveries}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleKpiClick('Completed')}
+                className="text-rose-600 hover:bg-rose-50 px-2 py-1 rounded-lg font-bold flex items-center gap-1 transition-all cursor-pointer border border-transparent hover:border-rose-200"
+              >
+                ↺ Return: {returnedDeliveries}
+              </button>
             </div>
           </div>
         )}
@@ -1635,8 +1823,8 @@ export default function App() {
                     <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">
                       Current Stage:
                     </span>
-                    <span className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] ${getStageBadgeColor(matched.status)}`}>
-                      {getStageLabel(matched.status)}
+                    <span className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] ${getStageBadgeColor(matched.status, matched)}`}>
+                      {getStageLabel(matched.status, matched)}
                     </span>
                   </div>
                 </div>
@@ -1693,6 +1881,15 @@ export default function App() {
                               <FileText className="w-3.5 h-3.5 text-slate-450" /> Invoice Number
                             </span>
                             <p className="font-mono font-bold text-slate-800 text-sm mt-1">{matched.invoiceNumber}</p>
+                          </div>
+                        )}
+
+                        {matched.invoiceAmount && (
+                          <div className="bg-slate-50/50 border border-slate-200 p-3.5 rounded-xl">
+                            <span className="text-[10px] uppercase font-black text-slate-400 tracking-wider flex items-center gap-1">
+                              <DollarSign className="w-3.5 h-3.5 text-slate-455" /> Invoice Amount
+                            </span>
+                            <p className="font-sans font-bold text-slate-850 text-sm mt-1">{formatAccounting(matched.invoiceAmount)}</p>
                           </div>
                         )}
 
@@ -2105,29 +2302,7 @@ export default function App() {
                 </span>
               </div>
 
-              {spreadsheetId ? (
-                <div className="flex items-center gap-1.5 bg-slate-50 border-2 border-slate-900 py-1.5 px-2.5 sm:px-3 rounded-xl shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] max-w-full">
-                  <Database className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600 shrink-0" />
-                  <span className="text-xs font-bold text-slate-700 truncate max-w-[70px] sm:max-w-[150px]">
-                    {spreadsheetName}
-                  </span>
-                  <a
-                    href={spreadsheetUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-slate-400 hover:text-slate-950 transition-colors p-0.5 ml-0.5"
-                    title="Open sheet in new window"
-                  >
-                    <ExternalLink className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-900" />
-                  </a>
-                  <button
-                    onClick={() => setIsConfiguringSheet(true)}
-                    className="text-[9px] sm:text-[10px] font-bold text-slate-900 hover:text-slate-500 ml-1 underline-offset-2 hover:underline uppercase tracking-wider shrink-0"
-                  >
-                    Change
-                  </button>
-                </div>
-              ) : (
+              {!spreadsheetId && (
                 <button
                   onClick={() => setIsConfiguringSheet(true)}
                   className="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold px-3 py-1.5 rounded-xl border-2 border-slate-900 transition-colors flex items-center gap-1.5 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]"
@@ -2150,61 +2325,218 @@ export default function App() {
 
       {/* Sheets Integration Configure Modal/Bar if logged in and not configured */}
       {isConfiguringSheet && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl border border-slate-100 overflow-hidden transform animate-in fade-in zoom-in-95 duration-150">
-            <div className="px-6 py-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="font-display font-semibold text-slate-800 text-lg">Set up Order Storage Spreadsheet</h3>
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-[#f8fafc] rounded-3xl w-full max-w-5xl shadow-[0_25px_50px_-12px_rgba(0,0,0,0.25)] border-2 border-slate-900 overflow-hidden transform animate-in fade-in zoom-in-95 duration-200 flex flex-col my-8">
+            <div className="px-6 py-4 bg-white border-b-2 border-slate-900 flex items-center justify-between">
+              <span className="font-sans font-black text-slate-900 uppercase tracking-widest text-xs flex items-center gap-2">
+                <Database className="w-4 h-4 text-emerald-500" />
+                <span>Google Sheets Integration Settings</span>
+              </span>
               <button
+                type="button"
                 onClick={() => setIsConfiguringSheet(false)}
-                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
+                className="px-3 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border-2 border-slate-900 rounded-xl text-[10px] font-extrabold uppercase tracking-wider transition-all shadow-[1.5px_1.5px_0px_0px_rgba(0,0,0,1)] active:translate-y-[1px] active:shadow-[0px_0px_0px_0px_rgba(0,0,0,1)] cursor-pointer select-none"
               >
-                Cancel
+                Close
               </button>
             </div>
             
-            <div className="p-6 space-y-5">
-              <div className="text-slate-600 text-sm space-y-2">
-                <p>
-                  To track scan stages dynamically, please configure where you want data to be stored. We store records securely in high-contrast columns on Google Sheets.
-                </p>
-                <p className="font-semibold text-slate-800">Choose one option below:</p>
+            <div className="p-6 sm:p-8 space-y-6 max-h-[85vh] overflow-y-auto">
+              {/* Complete Database Integrations Header Banner */}
+              <div className="bg-[#f0fdf9] border-2 border-[#14b8a6]/30 rounded-2xl p-5 flex items-start gap-4">
+                <div className="p-3 bg-[#e6fbf2] border border-[#14b8a6]/20 rounded-xl text-[#09a66d] shrink-0">
+                  <Database className="w-6 h-6 stroke-[2.5]" />
+                </div>
+                <div className="space-y-1">
+                  <h4 className="text-base font-black text-slate-900 tracking-tight">Complete Database Integrations</h4>
+                  <p className="text-xs text-slate-500 leading-relaxed font-medium">
+                    Connect a Google Sheet to fetch, update, and manage your inventory. If you do not have one, you can enter a name and we will create a compliant workbook with pre-populated schema columns instantly for you.
+                  </p>
+                </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Create Sheets */}
-                <button
-                  onClick={handleCreateNewSheet}
-                  className="flex flex-col items-center justify-center p-5 text-center bg-brand-50 hover:bg-brand-100 border border-brand-200 rounded-xl transition-all group"
-                >
-                  <Plus className="w-8 h-8 text-brand-600 mb-2 group-hover:scale-110 transition-transform" />
-                  <span className="font-bold text-slate-800 text-sm">Create New Spreadsheet</span>
-                  <span className="text-xs text-slate-500 mt-1">Create a formatted template directly in your Google Drive</span>
-                </button>
-
-                {/* Connect spreadsheet ID */}
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 flex flex-col justify-between">
-                  <div>
-                    <span className="font-bold text-slate-800 text-xs uppercase tracking-wider block mb-2">Connect Existing File</span>
-                    <span className="text-xs text-slate-500 block mb-2">Paste your existing Google Sheet ID below:</span>
-                  </div>
-                  <form onSubmit={handleConnectExistingSheet} className="space-y-2">
-                    <input
-                      type="text"
-                      value={sheetIdInput}
-                      onChange={(e) => setSheetIdInput(e.target.value)}
-                      placeholder="e.g. 1aBCDeFGhIJKlMnOpQ..."
-                      className="bg-white border border-slate-200 rounded-lg text-xs px-2.5 py-1.5 w-full font-mono outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
-                    />
+              {/* Bento Grid */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                {/* Left Panel: Select Inventory Spreadsheet */}
+                <div className="lg:col-span-7 bg-white border-2 border-slate-900 rounded-2xl p-5 flex flex-col min-h-[420px] shadow-[3px_3px_0px_0px_rgba(15,23,42,1)]">
+                  <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <Database className="w-5 h-5 text-emerald-500" />
+                      <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider font-sans">Select Inventory Spreadsheet</h3>
+                    </div>
                     <button
-                      type="submit"
-                      className="bg-slate-800 hover:bg-slate-900 text-white font-semibold text-xs px-3 py-1.5 rounded-lg w-full transition-colors"
+                      type="button"
+                      onClick={triggerSearchSheets}
+                      disabled={searchingSheets}
+                      className="p-2 text-slate-500 hover:text-slate-900 hover:bg-slate-50 rounded-xl border border-slate-200 transition-colors cursor-pointer"
+                      title="Refresh Spreadsheet list"
                     >
-                      Connect File
+                      <RefreshCw className={`w-4 h-4 ${searchingSheets ? 'animate-spin' : ''}`} />
                     </button>
-                    <p className="text-[10px] text-slate-500 mt-2 leading-relaxed leading-normal bg-amber-50 p-2 rounded border border-amber-200">
-                      💡 <strong>Permissions Hint:</strong> If you get a "permission" / "caller does not have permission" error, it means the Google Sheets checkbox wasn't enabled. To fix, click the Power icon (top-right) to Sign Out, and sign back in while <strong>checking the permission boxes</strong>.
+                  </div>
+
+                  {/* Scrollable list */}
+                  <div className="flex-1 space-y-3 overflow-y-auto max-h-[280px] pr-1">
+                    {searchingSheets ? (
+                      <div className="flex flex-col items-center justify-center py-12 gap-3 text-slate-500">
+                        <RefreshCw className="w-8 h-8 animate-spin text-[#00cc88]" />
+                        <p className="text-xs font-bold font-sans">Scanning Google Drive for files...</p>
+                      </div>
+                    ) : discoveredSheets.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-12 text-center text-slate-400 gap-2">
+                        <AlertCircle className="w-10 h-10 text-slate-300" />
+                        <p className="text-xs font-bold font-sans">No spreadsheets detected in your Google Drive.</p>
+                        <p className="text-[11px] font-sans">Use the right side panels to create a new database or link one by ID.</p>
+                      </div>
+                    ) : (
+                      discoveredSheets.map((sheet) => (
+                        <div
+                          key={sheet.id}
+                          className="flex items-center justify-between p-3.5 bg-slate-50 hover:bg-slate-100/60 border-2 border-slate-200 hover:border-slate-900 rounded-xl transition-all group gap-4"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="p-2.5 bg-white border border-slate-200 rounded-xl text-slate-400 group-hover:text-emerald-600 transition-colors shrink-0">
+                              <Database className="w-4 h-4" />
+                            </div>
+                            <div className="min-w-0 space-y-0.5">
+                              <p className="font-bold text-xs text-slate-800 truncate leading-snug">{sheet.name}</p>
+                              <p className="text-[9px] font-mono text-slate-400 truncate select-all">ID: {sheet.id}</p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              setIsLoadingOrders(true);
+                              try {
+                                await ensureOrdersSheetExists(token!, sheet.id);
+                                const constructedUrl = `https://docs.google.com/spreadsheets/d/${sheet.id}/edit`;
+                                setSpreadsheetId(sheet.id);
+                                setSpreadsheetUrl(constructedUrl);
+                                setSpreadsheetName(sheet.name);
+
+                                const config: SpreadsheetConfig = {
+                                  spreadsheetId: sheet.id,
+                                  spreadsheetUrl: constructedUrl,
+                                  sheetName: sheet.name
+                                };
+                                safeStorage.setItem('order_tracker_sheet_config', JSON.stringify(config));
+                                setIsConfiguringSheet(false);
+                                // Sync sheet after selection
+                                await handleRefreshOrders();
+                              } catch (err: any) {
+                                alert(err.message || 'Failed to select spreadsheet. Make sure permissions are checked.');
+                              } finally {
+                                setIsLoadingOrders(false);
+                              }
+                            }}
+                            className="px-3 py-1.5 bg-white hover:bg-slate-950 hover:text-white border-2 border-slate-900 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all shrink-0 cursor-pointer text-slate-700 flex items-center gap-1"
+                          >
+                            <span>Sheet</span>
+                            <ExternalLink className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Footnote matching real columns of scanflow */}
+                  <div className="mt-4 pt-3 border-t border-slate-100">
+                    <p className="text-[10px] font-medium leading-relaxed text-slate-400">
+                      * Note: spreadsheets will have a predefined header layout: <span className="font-mono text-[9px] text-slate-500 font-bold bg-slate-50 px-1 py-0.5 rounded border">Order ID</span>, <span className="font-mono text-[9px] text-slate-500 font-bold bg-slate-50 px-1 py-0.5 rounded border">SO Number</span>, <span className="font-mono text-[9px] text-slate-500 font-bold bg-slate-50 px-1 py-0.5 rounded border">Customer Name</span>, <span className="font-mono text-[9px] text-slate-500 font-bold bg-slate-50 px-1 py-0.5 rounded border">Packing List No</span>, <span className="font-mono text-[9px] text-slate-500 font-bold bg-slate-50 px-1 py-0.5 rounded border">Invoice Number</span>, <span className="font-mono text-[9px] text-slate-500 font-bold bg-slate-50 px-1 py-0.5 rounded border">Total Package</span>, <span className="font-mono text-[9px] text-slate-500 font-bold bg-slate-50 px-1 py-0.5 rounded border">Assigned Operator</span>, <span className="font-mono text-[9px] text-slate-500 font-bold bg-slate-50 px-1 py-0.5 rounded border">Khan/District</span>, <span className="font-mono text-[9px] text-slate-500 font-bold bg-slate-50 px-1 py-0.5 rounded border">City/Province</span>, <span className="font-mono text-[9px] text-slate-500 font-bold bg-slate-50 px-1 py-0.5 rounded border">Status</span>, <span className="font-mono text-[9px] text-slate-500 font-bold bg-slate-50 px-1 py-0.5 rounded border">Last Updated</span>.
                     </p>
-                  </form>
+                  </div>
+                </div>
+
+                {/* Right Column: Cards */}
+                <div className="lg:col-span-5 flex flex-col gap-6">
+                  {/* Card 1: Create Database */}
+                  <div className="bg-white border-2 border-slate-900 rounded-2xl p-5 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] flex flex-col justify-between min-h-[195px]">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1.5 text-[#00a36c]">
+                        <Plus className="w-5 h-5 stroke-[2.5]" />
+                        <h3 className="text-xs font-black text-slate-900 uppercase tracking-widest">Create Database</h3>
+                      </div>
+                      <div className="space-y-1.5 pt-2">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Spreadsheet Title Name</label>
+                        <input
+                          type="text"
+                          value={createTitleInput}
+                          onChange={(e) => setCreateTitleInput(e.target.value)}
+                          placeholder="Product Inventory Database"
+                          className="w-full bg-white border-2 border-slate-900 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:bg-slate-50 transition-all font-sans"
+                        />
+                      </div>
+                    </div>
+                    <div className="pt-4">
+                      <button
+                        type="button"
+                        onClick={() => handleCreateNewSheet(createTitleInput)}
+                        className="w-full py-2.5 px-4 bg-[#00a36c] hover:bg-[#008c5c] text-white border-2 border-slate-900 rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:translate-y-[-1px] hover:shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] active:translate-y-[1px] active:shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] cursor-pointer flex items-center justify-center gap-2 select-none"
+                      >
+                        <Plus className="w-4 h-4 stroke-[2.5]" />
+                        <span>Create Spreadsheet</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Card 2: Link Sheet ID Directly */}
+                  <div className="bg-white border-2 border-slate-900 rounded-2xl p-5 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] flex flex-col justify-between min-h-[195px]">
+                    <form
+                      onSubmit={async (e) => {
+                        e.preventDefault();
+                        if (!sheetIdInput.trim()) return;
+                        setIsLoadingOrders(true);
+                        try {
+                          await ensureOrdersSheetExists(token!, sheetIdInput.trim());
+                          const constructedUrl = `https://docs.google.com/spreadsheets/d/${sheetIdInput.trim()}/edit`;
+                          setSpreadsheetId(sheetIdInput.trim());
+                          setSpreadsheetUrl(constructedUrl);
+                          setSpreadsheetName('Connected Custom Spreadsheet');
+
+                          const config: SpreadsheetConfig = {
+                            spreadsheetId: sheetIdInput.trim(),
+                            spreadsheetUrl: constructedUrl,
+                            sheetName: 'Connected Custom Spreadsheet'
+                          };
+                          safeStorage.setItem('order_tracker_sheet_config', JSON.stringify(config));
+                          setIsConfiguringSheet(false);
+                          setSheetIdInput('');
+                          await handleRefreshOrders();
+                        } catch (err: any) {
+                          alert('Error connecting sheet: ' + (err.message || 'Make sure the Spreadsheet ID is correct and you have permission to access it.'));
+                        } finally {
+                          setIsLoadingOrders(false);
+                        }
+                      }}
+                      className="flex flex-col justify-between h-full min-h-[155px] w-full"
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-1.5 text-[#553cfb]">
+                          <Database className="w-5 h-5" />
+                          <h3 className="text-xs font-black text-slate-900 uppercase tracking-widest">Link Sheet ID Directly</h3>
+                        </div>
+                        <div className="space-y-1.5 pt-2">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Google Spreadsheet ID</label>
+                          <input
+                            type="text"
+                            value={sheetIdInput}
+                            onChange={(e) => setSheetIdInput(e.target.value)}
+                            placeholder="e.g. 1aBCDeFGHiJKlMnOpQRSTuVwx..."
+                            className="w-full bg-white border-2 border-slate-900 rounded-xl px-3 py-2 text-xs font-mono font-bold text-slate-800 outline-none focus:bg-slate-50 transition-all"
+                          />
+                        </div>
+                      </div>
+                      <div className="pt-4">
+                        <button
+                          type="submit"
+                          className="w-full py-2.5 px-4 bg-[#553cfb] hover:bg-[#432ee0] text-white border-2 border-slate-900 rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:translate-y-[-1px] hover:shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] active:translate-y-[1px] active:shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] cursor-pointer flex items-center justify-center gap-1.5 select-none"
+                        >
+                          <span>Link Spreadsheet</span>
+                          <ArrowRight className="w-4 h-4 stroke-[2.5]" />
+                        </button>
+                      </div>
+                    </form>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2214,6 +2546,54 @@ export default function App() {
 
       {/* Main Container Content */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
+
+        {/* Premium Google Sheets Connection Status Bar (Matches image style perfectly) */}
+        {token && spreadsheetId && (
+          <div className="bg-[#0f172a] text-slate-100 rounded-2xl border-2 border-slate-900 p-4 sm:p-5 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] flex flex-col md:flex-row md:items-center justify-between gap-4 font-sans">
+            <div className="flex items-center gap-3.5 min-w-0">
+              <div className="p-2.5 bg-slate-900 border border-slate-800 rounded-xl text-[#00cc88] shrink-0 flex items-center justify-center">
+                <Database className="w-5 h-5" />
+              </div>
+              <div className="min-w-0 space-y-1">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[11px] sm:text-xs font-bold text-slate-400 uppercase tracking-wider">Inventory Source:</span>
+                  <a
+                    href={spreadsheetUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[12px] sm:text-sm font-black text-[#00cc88] hover:text-[#00ffaa] flex items-center gap-1.5 hover:underline truncate"
+                    title="Open sheet in new tab"
+                  >
+                    <span>{spreadsheetName || 'Connected Custom Spreadsheet'}</span>
+                    <ExternalLink className="w-3.5 h-3.5 stroke-[2.5]" />
+                  </a>
+                </div>
+                <p className="text-[10px] text-slate-500 font-mono tracking-wider truncate" title="Spreadsheet ID">
+                  ID: <span className="select-all">{spreadsheetId}</span>
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2.5 shrink-0 justify-end">
+              <button
+                type="button"
+                onClick={() => setIsConfiguringSheet(true)}
+                className="px-4 py-2 bg-transparent hover:bg-slate-900/40 text-slate-300 hover:text-white border border-slate-700 hover:border-slate-500 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center min-h-[38px] select-none"
+              >
+                Switch DB Sheet
+              </button>
+              <button
+                type="button"
+                onClick={handleRefreshOrders}
+                disabled={isLoadingOrders}
+                className="px-4 py-2 bg-[#00cc88] hover:bg-[#00e699] disabled:bg-emerald-800/40 disabled:text-emerald-500/60 text-slate-950 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-[0px_2px_4px_rgba(0,0,0,0.1)] active:scale-95 disabled:pointer-events-none min-h-[38px] select-none"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingOrders ? 'animate-spin' : ''}`} />
+                <span>{isLoadingOrders ? 'Syncing...' : 'Sync Sheet'}</span>
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Tab Selection Row */}
         {token && spreadsheetId && (
@@ -2339,7 +2719,7 @@ export default function App() {
         )}
 
         {currentTab === 'setup' ? (
-          <SetupModule />
+          <SetupModule token={token} spreadsheetId={spreadsheetId} />
         ) : currentTab === 'reports' ? (
           <ReportModule orders={orders} />
         ) : currentTab === 'users' ? (
@@ -2492,14 +2872,15 @@ export default function App() {
 
             {/* Filter tab row - horizontally scrollable list on mobile, grid on large displays */}
             <div className="flex items-center gap-1.5 bg-slate-100 rounded-2xl p-1.5 mb-5 text-xs font-bold border-2 border-slate-900 overflow-x-auto scrollbar-none snap-x whitespace-nowrap">
-              {(['All', 'Registered', 'Picking', 'Checking', 'Waiting Delivery', 'Delivery', 'Completed'] as const).filter(isFilterTabAllowed).map(tab => {
+              {(['All', 'Registered', 'Picking', 'Checking', 'Waiting Delivery', 'Delivery', 'Completed', 'Incomplete'] as const).filter(isFilterTabAllowed).map(tab => {
                 const count = tab === 'All' ? totalCount
                             : tab === 'Registered' ? inRegisteredCount
                             : tab === 'Picking' ? inPickingCount
                             : tab === 'Checking' ? inCheckingCount
                             : tab === 'Waiting Delivery' ? inWaitingDeliveryCount
                             : tab === 'Delivery' ? inDeliveryCount
-                            : tab === 'Completed' ? totalCompleted : 0;
+                            : tab === 'Completed' ? totalCompleted
+                            : tab === 'Incomplete' ? incompleteDeliveries : 0;
                 
                 // Get corresponding icon and color
                 let IconComponent = Layers;
@@ -2522,6 +2903,9 @@ export default function App() {
                 } else if (tab === 'Completed') {
                   IconComponent = CheckCircle2;
                   activeClass = 'bg-emerald-600 text-white shadow-[2px_2px_0px_0px_rgba(16,185,129,0.3)]';
+                } else if (tab === 'Incomplete') {
+                  IconComponent = AlertTriangle;
+                  activeClass = 'bg-amber-500 text-white shadow-[2px_2px_0px_0px_rgba(245,158,11,0.3)]';
                 }
 
                 const isActive = activeFilter === tab;
@@ -2673,8 +3057,8 @@ export default function App() {
                           </div>
                           
                           <div className="flex items-center gap-1 shrink-0">
-                            <span className={`text-[9px] sm:text-[10px] px-2.5 py-1 border-2 font-black rounded-xl uppercase tracking-wider shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] ${getStageBadgeColor(order.status)}`}>
-                              {getStageLabel(order.status)}
+                            <span className={`text-[9px] sm:text-[10px] px-2.5 py-1 border-2 font-black rounded-xl uppercase tracking-wider shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] ${getStageBadgeColor(order.status, order)}`}>
+                              {getStageLabel(order.status, order)}
                             </span>
                             <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-slate-900 transition-colors hidden sm:block" />
                           </div>
@@ -2724,49 +3108,59 @@ export default function App() {
                               </div>
                             )}
 
-                            {/* Grid row for parameters */}
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pl-1.5 pt-1.5 border-t border-dashed border-slate-200">
-                              {/* PL# */}
-                              <div className="bg-white border border-slate-250 rounded-xl p-2.5 flex flex-col justify-between hover:border-slate-400 transition-colors">
-                                <span className="text-[8px] sm:text-[9px] uppercase font-extrabold text-slate-450 tracking-wider mb-1 flex items-center gap-1 shrink-0">
-                                  <Clipboard className="w-2.5 h-2.5 text-slate-400" />
-                                  PL#
-                                </span>
-                                <span className={`font-mono font-bold text-xs select-all break-all leading-none ${order.packingListNo ? 'text-slate-850' : 'text-slate-400 italic'}`}>
-                                  {order.packingListNo || 'None'}
-                                </span>
-                              </div>
-                              {/* INV# */}
-                              <div className="bg-white border border-slate-250 rounded-xl p-2.5 flex flex-col justify-between hover:border-slate-400 transition-colors">
-                                <span className="text-[8px] sm:text-[9px] uppercase font-extrabold text-slate-455 tracking-wider mb-1 flex items-center gap-1 shrink-0">
-                                  <Receipt className="w-2.5 h-2.5 text-slate-400" />
-                                  Invoice
-                                </span>
-                                <span className={`font-mono font-bold text-xs select-all break-all leading-none ${order.invoiceNumber ? 'text-slate-850' : 'text-slate-400 italic'}`}>
-                                  {order.invoiceNumber || 'None'}
-                                </span>
-                              </div>
-                              {/* Pkg */}
-                              <div className="bg-white border border-slate-250 rounded-xl p-2.5 flex flex-col justify-between hover:border-slate-400 transition-colors">
-                                <span className="text-[8px] sm:text-[9px] uppercase font-extrabold text-slate-450 tracking-wider mb-1 flex items-center gap-1 shrink-0">
-                                  <Package className="w-2.5 h-2.5 text-slate-400" />
-                                  Package(s)
-                                </span>
-                                <span className={`font-sans font-black text-xs leading-none ${order.totalPackage ? 'text-slate-850' : 'text-slate-400 italic'}`}>
-                                  {order.totalPackage || '—'}
-                                </span>
-                              </div>
-                              {/* Assigned */}
-                              <div className="bg-white border border-slate-250 rounded-xl p-2.5 flex flex-col justify-between hover:border-slate-400 transition-colors">
-                                <span className="text-[8px] sm:text-[9px] uppercase font-extrabold text-slate-450 tracking-wider mb-1 flex items-center gap-1 shrink-0">
-                                  <Users className="w-2.5 h-2.5 text-slate-400" />
-                                  Started by
-                                </span>
-                                <span className={`font-sans font-bold text-xs truncate leading-none ${order.assignedTo ? 'text-slate-800' : 'text-slate-400 italic'}`}>
-                                  {order.assignedTo || 'Unassigned'}
-                                </span>
-                              </div>
-                            </div>
+                             {/* Grid row for parameters */}
+                             <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 pl-1.5 pt-1.5 border-t border-dashed border-slate-200">
+                               {/* PL# */}
+                               <div className="bg-white border border-slate-250 rounded-xl p-2.5 flex flex-col justify-between hover:border-slate-400 transition-colors">
+                                 <span className="text-[8px] sm:text-[9px] uppercase font-extrabold text-slate-450 tracking-wider mb-1 flex items-center gap-1 shrink-0">
+                                   <Clipboard className="w-2.5 h-2.5 text-slate-400" />
+                                   PL#
+                                 </span>
+                                 <span className={`font-mono font-bold text-xs select-all break-all leading-none ${order.packingListNo ? 'text-slate-850' : 'text-slate-400 italic'}`}>
+                                   {order.packingListNo || 'None'}
+                                 </span>
+                               </div>
+                               {/* INV# */}
+                               <div className="bg-white border border-slate-250 rounded-xl p-2.5 flex flex-col justify-between hover:border-slate-400 transition-colors">
+                                 <span className="text-[8px] sm:text-[9px] uppercase font-extrabold text-slate-455 tracking-wider mb-1 flex items-center gap-1 shrink-0">
+                                   <Receipt className="w-2.5 h-2.5 text-slate-400" />
+                                   Invoice
+                                 </span>
+                                 <span className={`font-mono font-bold text-xs select-all break-all leading-none ${order.invoiceNumber ? 'text-slate-850' : 'text-slate-400 italic'}`}>
+                                   {order.invoiceNumber || 'None'}
+                                 </span>
+                               </div>
+                               {/* Invoice Amount */}
+                               <div className="bg-white border border-slate-250 rounded-xl p-2.5 flex flex-col justify-between hover:border-slate-400 transition-colors">
+                                 <span className="text-[8px] sm:text-[9px] uppercase font-extrabold text-slate-450 tracking-wider mb-1 flex items-center gap-1 shrink-0">
+                                   <DollarSign className="w-2.5 h-2.5 text-slate-400" />
+                                   Invoice Amount
+                                 </span>
+                                 <span className={`font-sans font-bold text-xs select-all break-all leading-none ${order.invoiceAmount ? 'text-slate-850' : 'text-slate-400 italic'}`}>
+                                   {formatAccounting(order.invoiceAmount) || 'None'}
+                                 </span>
+                               </div>
+                               {/* Pkg */}
+                               <div className="bg-white border border-slate-250 rounded-xl p-2.5 flex flex-col justify-between hover:border-slate-400 transition-colors">
+                                 <span className="text-[8px] sm:text-[9px] uppercase font-extrabold text-slate-450 tracking-wider mb-1 flex items-center gap-1 shrink-0">
+                                   <Package className="w-2.5 h-2.5 text-slate-400" />
+                                   Package(s)
+                                 </span>
+                                 <span className={`font-sans font-black text-xs leading-none ${order.totalPackage ? 'text-slate-850' : 'text-slate-400 italic'}`}>
+                                   {order.totalPackage || '—'}
+                                 </span>
+                               </div>
+                               {/* Assigned */}
+                               <div className="bg-white border border-slate-250 rounded-xl p-2.5 flex flex-col justify-between hover:border-slate-400 transition-colors">
+                                 <span className="text-[8px] sm:text-[9px] uppercase font-extrabold text-slate-450 tracking-wider mb-1 flex items-center gap-1 shrink-0">
+                                   <Users className="w-2.5 h-2.5 text-slate-400" />
+                                   Started by
+                                 </span>
+                                 <span className={`font-sans font-bold text-xs truncate leading-none ${order.assignedTo ? 'text-slate-800' : 'text-slate-400 italic'}`}>
+                                   {order.assignedTo || 'Unassigned'}
+                                 </span>
+                               </div>
+                             </div>
                           </div>
                         )}
 
@@ -2872,8 +3266,8 @@ export default function App() {
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="text-[9px] uppercase tracking-widest font-extrabold text-slate-400 font-sans">Order Information Card</span>
-                    <span className={`text-[9px] px-2.5 py-0.5 border font-bold rounded-full uppercase ${getStageBadgeColor(selectedOrder.status)}`}>
-                      {getStageLabel(selectedOrder.status)}
+                    <span className={`text-[9px] px-2.5 py-0.5 border font-bold rounded-full uppercase ${getStageBadgeColor(selectedOrder.status, selectedOrder)}`}>
+                      {getStageLabel(selectedOrder.status, selectedOrder)}
                     </span>
                   </div>
                   <h4 className="font-mono font-black text-slate-900 text-xl mt-1">
@@ -2916,7 +3310,7 @@ export default function App() {
               </div>
 
               {/* Metadata Details Grid */}
-              {(selectedOrder.customerName || selectedOrder.packingListNo || selectedOrder.totalPackage || selectedOrder.invoiceNumber || selectedOrder.khanDistrict || selectedOrder.cityProvince || selectedOrder.assignedTo || selectedOrder.bu) && (
+              {(selectedOrder.customerName || selectedOrder.packingListNo || selectedOrder.totalPackage || selectedOrder.invoiceNumber || selectedOrder.invoiceAmount || selectedOrder.khanDistrict || selectedOrder.cityProvince || selectedOrder.assignedTo || selectedOrder.bu) && (
                 <div className="bg-white rounded-2xl p-4 border-2 border-slate-900 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] text-xs grid grid-cols-2 lg:grid-cols-4 gap-4">
                   {selectedOrder.customerName && (
                     <div className="col-span-2 lg:col-span-2">
@@ -2934,6 +3328,12 @@ export default function App() {
                     <span className="text-[9px] uppercase font-bold text-slate-450 tracking-wider block mb-0.5 font-sans">Invoice Number</span>
                     <span className={`font-mono font-bold border bg-slate-50 px-1.5 py-0.5 rounded text-xs ${selectedOrder.invoiceNumber ? 'text-slate-900 border-slate-200' : 'text-slate-400 border-slate-200'}`}>
                       {selectedOrder.invoiceNumber || 'NA'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[9px] uppercase font-bold text-slate-450 tracking-wider block mb-0.5 font-sans">Invoice Amount</span>
+                    <span className={`font-sans font-bold border bg-slate-50 px-1.5 py-0.5 rounded text-xs ${selectedOrder.invoiceAmount ? 'text-slate-900 border-slate-200' : 'text-slate-400 border-slate-200'}`}>
+                      {formatAccounting(selectedOrder.invoiceAmount) || 'NA'}
                     </span>
                   </div>
                   {selectedOrder.totalPackage && (
@@ -3150,8 +3550,37 @@ export default function App() {
                           </div>
                         );
 
+                      case 'DELIVERED_INCOMPLETE':
+                        return (
+                          <div className="space-y-3">
+                            <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-center">
+                              <p className="text-xs font-semibold text-amber-850">
+                                This order was marked as <span className="font-bold">Delivery Incomplete</span>.
+                              </p>
+                              <p className="text-[10px] text-slate-400 mt-1">
+                                Click below to start delivery and attempt dispatch again.
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => handleAdvanceStageClick(selectedOrder)}
+                              disabled={isLoadingOrders}
+                              className="w-full bg-teal-600 hover:bg-teal-700 text-white font-sans font-bold text-xs uppercase px-4 py-3 rounded-xl transition-all border-2 border-slate-900 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:translate-y-[-1px] active:translate-y-[1px] disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2"
+                            >
+                              <span>🚚 Start Delivery</span>
+                            </button>
+                            <div className="flex justify-center">
+                              <button
+                                onClick={() => triggerManualOverride('REGISTERED')}
+                                className="text-[10px] text-slate-500 hover:text-slate-900 underline mt-1 font-bold cursor-pointer bg-transparent border-0 font-sans"
+                              >
+                                Reset or Re-register Order
+                              </button>
+                            </div>
+                          </div>
+                        );
+
                       default:
-                        // DELIVERED_SUCCESS, DELIVERED_INCOMPLETE, DELIVERED_RETURN
+                        // DELIVERED_SUCCESS, DELIVERED_RETURN
                         return (
                           <div className="flex flex-col items-center justify-center text-center p-3 space-y-2">
                             <span className="text-xl">🏆</span>
@@ -3159,8 +3588,8 @@ export default function App() {
                               <p className="font-black text-slate-900 text-sm uppercase">Fulfillment Completed</p>
                               <div className="text-[11px] text-slate-500 mt-1 leading-relaxed font-semibold flex flex-wrap items-center justify-center gap-1.5 font-sans">
                                 <span>This order reached its final outcome:</span>
-                                <span className={`px-2 py-0.5 border font-bold text-[10px] rounded-full uppercase ${getStageBadgeColor(selectedOrder.status)}`}>
-                                  {getStageLabel(selectedOrder.status)}
+                                <span className={`px-2 py-0.5 border font-bold text-[10px] rounded-full uppercase ${getStageBadgeColor(selectedOrder.status, selectedOrder)}`}>
+                                  {getStageLabel(selectedOrder.status, selectedOrder)}
                                 </span>
                               </div>
                               {selectedOrder.deliveryEnd && (
@@ -3382,7 +3811,7 @@ export default function App() {
                 <div className="flex items-center justify-between pt-1 border-t border-dashed border-slate-200">
                   <span className="text-[9px] uppercase font-bold text-slate-405">Current Progress</span>
                   <span className={`text-[8px] font-extrabold px-2 py-0.5 rounded bg-slate-100 border uppercase shrink-0`}>
-                    {getStageLabel(qrModalOrder.status)}
+                    {getStageLabel(qrModalOrder.status, qrModalOrder)}
                   </span>
                 </div>
               </div>

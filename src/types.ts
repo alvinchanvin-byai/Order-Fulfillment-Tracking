@@ -15,6 +15,14 @@ export type OrderStage =
   | 'DELIVERED_INCOMPLETE'// Scanned twice and marked as Incomplete
   | 'DELIVERED_RETURN';   // Scanned twice and marked as Return
 
+export interface DeliveryAttempt {
+  attemptNumber: number;
+  deliveryStart: string;
+  deliveryEnd: string;
+  status: OrderStage;
+  assignedTo?: string;
+}
+
 export interface Order {
   id: string;             // Barcode or QR code ID (e.g. ORD-1001)
   status: OrderStage;
@@ -26,6 +34,7 @@ export interface Order {
   deliveryEnd: string;    // ISO Timestamp or empty
   items: string;          // Description of items or details
   lastUpdated: string;    // ISO Timestamp
+  deliveryAttempts?: DeliveryAttempt[];
   
   // Custom sale order registration fields
   customerName?: string;
@@ -36,6 +45,8 @@ export interface Order {
   cityProvince?: string;
   assignedTo?: string;
   bu?: string;
+  invoiceAmount?: string;
+  soDate?: string;
 }
 
 export interface ScanResult {
@@ -68,5 +79,19 @@ export interface UserCredentials {
   createdAt: string;
   allowedProcesses?: ('picking' | 'checking' | 'delivery')[];
 }
+
+export function formatAccounting(val: string | undefined | null): string {
+  if (!val) return '';
+  const cleaned = val.replace(/[^0-9.-]/g, '');
+  if (cleaned === '' || cleaned === '.') return '';
+  const num = parseFloat(cleaned);
+  if (isNaN(num)) return '';
+  
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(num);
+}
+
 
 
