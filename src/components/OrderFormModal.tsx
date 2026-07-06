@@ -6,7 +6,7 @@
 import { useState, FormEvent, useEffect } from 'react';
 import { X, Package, Info, QrCode, Clipboard, Camera, AlertCircle, Sparkles, Check } from 'lucide-react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
-import { CustomerMaster, formatAccounting } from '../types';
+import { Order, CustomerMaster, formatAccounting } from '../types';
 import { safeStorage } from '../lib/storage';
 
 const DEFAULT_CUSTOMER_MASTER: CustomerMaster[] = [
@@ -22,6 +22,7 @@ const DEFAULT_CUSTOMER_MASTER: CustomerMaster[] = [
 interface OrderFormModalProps {
   isOpen: boolean;
   onClose: () => void;
+  orders?: Order[];
   onAdd: (
     orderId: string,
     items: string,
@@ -33,7 +34,8 @@ interface OrderFormModalProps {
     cityProvince?: string,
     assignedTo?: string,
     bu?: string,
-    invoiceAmount?: string
+    invoiceAmount?: string,
+    documentType?: string
   ) => Promise<void>;
 }
 
@@ -108,7 +110,7 @@ const BU_OPTIONS = [
   'BU-InterCompany'
 ];
 
-export function OrderFormModal({ isOpen, onClose, onAdd }: OrderFormModalProps) {
+export function OrderFormModal({ isOpen, onClose, orders = [], onAdd }: OrderFormModalProps) {
   // Form State
   const [orderId, setOrderId] = useState('');
   const [customerName, setCustomerName] = useState('');
@@ -122,6 +124,8 @@ export function OrderFormModal({ isOpen, onClose, onAdd }: OrderFormModalProps) 
   const [cityProvince, setCityProvince] = useState('');
   const [assignedTo, setAssignedTo] = useState('');
   const [bu, setBu] = useState('');
+  const [documentType, setDocumentType] = useState('');
+  const [documentTypeOptions, setDocumentTypeOptions] = useState<string[]>([]);
   const [items, setItems] = useState('');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -134,6 +138,13 @@ export function OrderFormModal({ isOpen, onClose, onAdd }: OrderFormModalProps) 
       setPackageUnitOptions(list);
       if (list.length > 0) {
         setPackageUnit(list[0]);
+      }
+
+      const savedDocTypes = safeStorage.getItem('scanflow_document_types');
+      const docTypesList = savedDocTypes ? JSON.parse(savedDocTypes) : ['SO', 'PO', 'Invoice', 'Packing List', 'Return'];
+      setDocumentTypeOptions(docTypesList);
+      if (docTypesList.length > 0) {
+        setDocumentType(docTypesList[0]);
       }
     }
   }, [isOpen]);
@@ -398,6 +409,35 @@ export function OrderFormModal({ isOpen, onClose, onAdd }: OrderFormModalProps) 
       return;
     }
 
+    // 1. Check for duplicate SO# (Order ID)
+    const duplicateSo = orders.find(o => o.id.trim().toUpperCase() === trimmedId);
+    if (duplicateSo) {
+      setError(`Duplicate SO# found: "${trimmedId}" is already registered for customer "${duplicateSo.customerName || 'Unknown'}".`);
+      return;
+    }
+
+    // 2. Check for duplicate Packing List#
+    const plClean = packingListNo.trim().toUpperCase();
+    const isDummyPl = !plClean || ['-', 'N/A', 'NONE', '—'].includes(plClean);
+    if (!isDummyPl) {
+      const duplicatePl = orders.find(o => o.packingListNo && o.packingListNo.trim().toUpperCase() === plClean);
+      if (duplicatePl) {
+        setError(`Duplicate Packing List# found: "${plClean}" is already registered on order "${duplicatePl.id}" for customer "${duplicatePl.customerName || 'Unknown'}".`);
+        return;
+      }
+    }
+
+    // 3. Check for duplicate Invoice#
+    const invClean = invoiceNumber.trim().toUpperCase();
+    const isDummyInv = !invClean || ['-', 'N/A', 'NONE', '—'].includes(invClean);
+    if (!isDummyInv) {
+      const duplicateInv = orders.find(o => o.invoiceNumber && o.invoiceNumber.trim().toUpperCase() === invClean);
+      if (duplicateInv) {
+        setError(`Duplicate Invoice# found: "${invClean}" is already registered on order "${duplicateInv.id}" for customer "${duplicateInv.customerName || 'Unknown'}".`);
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     try {
       const finalTotalPackage = packageQty.trim() ? `${packageQty.trim()} ${packageUnit}`.trim() : '';
@@ -413,7 +453,8 @@ export function OrderFormModal({ isOpen, onClose, onAdd }: OrderFormModalProps) 
         cityProvince,
         assignedTo,
         bu,
-        formatAccounting(invoiceAmount)
+        formatAccounting(invoiceAmount),
+        documentType
       );
 
       // Reset Form state
@@ -427,6 +468,7 @@ export function OrderFormModal({ isOpen, onClose, onAdd }: OrderFormModalProps) 
       setCityProvince('');
       setAssignedTo('');
       setBu('');
+      setDocumentType('');
       setItems('');
 
       onClose();
@@ -762,6 +804,26 @@ export function OrderFormModal({ isOpen, onClose, onAdd }: OrderFormModalProps) 
                 >
                   <option value="">Select BU</option>
                   {busList.map(opt => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Document Type Dropdown */}
+            <div className="space-y-2 col-span-1">
+              <label className="block text-[11px] font-extrabold text-slate-500 uppercase tracking-widest font-sans">
+                Document Type
+              </label>
+              <div className="rounded-xl overflow-hidden shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] border-2 border-slate-900">
+                <select
+                  value={documentType}
+                  onChange={(e) => setDocumentType(e.target.value)}
+                  className="w-full bg-slate-50 px-3 py-2.5 text-sm focus:bg-white outline-none font-bold"
+                  disabled={isSubmitting}
+                >
+                  <option value="">Select Document Type</option>
+                  {documentTypeOptions.map(opt => (
                     <option key={opt} value={opt}>{opt}</option>
                   ))}
                 </select>

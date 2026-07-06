@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { 
   Download, 
   Search, 
@@ -10,7 +10,9 @@ import {
   ClipboardList,
   Building,
   CheckCircle,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Maximize2,
+  Minimize2
 } from 'lucide-react';
 import { Order, formatAccounting } from '../types';
 import * as XLSX from 'xlsx';
@@ -35,31 +37,31 @@ const getFriendlyStatusLabel = (status: string): string => {
     const match = status.match(/DELIVERED_INCOMPLETE_(\d+)/);
     if (match) {
       const num = parseInt(match[1], 10);
-      return `${getOrdinalSuffix(num)}_Delivery Incomplete`;
+      return `${getOrdinalSuffix(num)} Delivery Incomplete`;
     }
-    return '1st_Delivery Incomplete';
+    return '1st Delivery Incomplete';
   }
   if (status.startsWith('DELIVERED_SUCCESS')) {
     const match = status.match(/DELIVERED_SUCCESS_(\d+)/);
     if (match) {
       const num = parseInt(match[1], 10);
-      return `${getOrdinalSuffix(num)}_Delivery Success`;
+      return `${getOrdinalSuffix(num)} Delivery Success`;
     }
-    return '1st_Delivery Success';
+    return '1st Delivery Success';
   }
   if (status.startsWith('DELIVERED_RETURN')) {
     const match = status.match(/DELIVERED_RETURN_(\d+)/);
     if (match) {
       const num = parseInt(match[1], 10);
-      return `${getOrdinalSuffix(num)}_Delivery Return`;
+      return `${getOrdinalSuffix(num)} Delivery Return`;
     }
-    return '1st_Delivery Return';
+    return '1st Delivery Return';
   }
   if (status.startsWith('DELIVERY_STARTED')) {
     const match = status.match(/DELIVERY_STARTED_(\d+)/);
     if (match) {
       const num = parseInt(match[1], 10);
-      return `${getOrdinalSuffix(num)}_In Delivery`;
+      return `${getOrdinalSuffix(num)} In Delivery`;
     }
     return 'In Delivery';
   }
@@ -72,9 +74,9 @@ const getFriendlyStatusLabel = (status: string): string => {
     case 'CHECKING_STARTED': return 'Checking Started';
     case 'READY_DELIVERY': return 'Ready to Deliver';
     case 'DELIVERY_STARTED': return 'In Delivery';
-    case 'DELIVERED_SUCCESS': return '1st_Delivery Success';
-    case 'DELIVERED_INCOMPLETE': return '1st_Delivery Incomplete';
-    case 'DELIVERED_RETURN': return '1st_Delivery Return';
+    case 'DELIVERED_SUCCESS': return '1st Delivery Success';
+    case 'DELIVERED_INCOMPLETE': return '1st Delivery Incomplete';
+    case 'DELIVERED_RETURN': return '1st Delivery Return';
     default: return status;
   }
 };
@@ -86,10 +88,34 @@ interface ReportModuleProps {
 type ReportType = 'picking' | 'checking' | 'picking_checking' | 'waiting_delivery' | 'master';
 
 export function ReportModule({ orders }: ReportModuleProps) {
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [activeReport, setActiveReport] = useState<ReportType>('picking');
   const [searchQuery, setSearchQuery] = useState('');
   const [startDateStr, setStartDateStr] = useState('');
   const [endDateStr, setEndDateStr] = useState('');
+
+  // Native Fullscreen API Toggle and listener
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    };
+  }, []);
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch((err) => {
+        console.warn(`Error attempting to enable fullscreen: ${err.message}`);
+      });
+      setIsFullscreen(true);
+    } else {
+      document.exitFullscreen().catch(() => {});
+      setIsFullscreen(false);
+    }
+  };
 
   // Helper to format ISO strings cleanly
   const formatDateTime = (isoString?: string) => {
@@ -423,6 +449,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
         totalPackage: order.totalPackage || 'None',
         startedBy: order.assignedTo || 'Unassigned',
         bu: order.bu || 'None',
+        documentType: order.documentType || 'None',
         startPick,
         endPick,
         timeUse
@@ -448,6 +475,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
         totalPackage: order.totalPackage || 'None',
         startedBy: order.assignedTo || 'Unassigned',
         bu: order.bu || 'None',
+        documentType: order.documentType || 'None',
         startCheck,
         endCheck,
         timeUse
@@ -473,6 +501,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
         totalPackage: order.totalPackage || 'None',
         startedBy: order.assignedTo || 'Unassigned',
         bu: order.bu || 'None',
+        documentType: order.documentType || 'None',
         startPick,
         endCheck,
         timeUse
@@ -502,6 +531,8 @@ export function ReportModule({ orders }: ReportModuleProps) {
           invoiceNo: order.invoiceNumber || 'None',
           invoiceAmount: formatAccounting(order.invoiceAmount) || 'None',
           totalPackage: order.totalPackage || 'None',
+          bu: order.bu || 'None',
+          documentType: order.documentType || 'None',
           pickStart,
           pickEnd,
           pickerBy: order.assignedTo || 'Unassigned',
@@ -537,6 +568,8 @@ export function ReportModule({ orders }: ReportModuleProps) {
           invoiceNo: order.invoiceNumber || 'None',
           invoiceAmount: formatAccounting(order.invoiceAmount) || 'None',
           totalPackage: order.totalPackage || 'None',
+          bu: order.bu || 'None',
+          documentType: order.documentType || 'None',
           pickStart,
           pickEnd,
           pickerBy: order.assignedTo || 'Unassigned',
@@ -564,6 +597,8 @@ export function ReportModule({ orders }: ReportModuleProps) {
             invoiceNo: order.invoiceNumber || 'None',
             invoiceAmount: formatAccounting(order.invoiceAmount) || 'None',
             totalPackage: order.totalPackage || 'None',
+            bu: order.bu || 'None',
+            documentType: order.documentType || 'None',
             pickStart,
             pickEnd,
             pickerBy: order.assignedTo || 'Unassigned',
@@ -598,6 +633,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
         'Total Package': row.totalPackage,
         'Started By': row.startedBy,
         'BU': row.bu,
+        'Document Type': row.documentType,
         'Start Picking Date/Time': row.startPick,
         'End Picking Date/Time': row.endPick,
         'Time Used': row.timeUse
@@ -615,6 +651,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
         'Total Package': row.totalPackage,
         'Started By': row.startedBy,
         'BU': row.bu,
+        'Document Type': row.documentType,
         'Start Checking Date/Time': row.startCheck,
         'End Checking Date/Time': row.endCheck,
         'Time Used': row.timeUse
@@ -632,6 +669,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
         'Total Package': row.totalPackage,
         'Started By': row.startedBy,
         'BU': row.bu,
+        'Document Type': row.documentType,
         'Start Picking Date/Time': row.startPick,
         'End Checking Date/Time': row.endCheck,
         'Time Used': row.timeUse
@@ -649,6 +687,8 @@ export function ReportModule({ orders }: ReportModuleProps) {
         'Invoice #': row.invoiceNo,
         'Invoice Amount': row.invoiceAmount,
         'Total Package': row.totalPackage,
+        'BU': row.bu,
+        'Document Type': row.documentType,
         'Pick Start Date/Time': row.pickStart,
         'Pick End Date/Time': row.pickEnd,
         'Picker By': row.pickerBy,
@@ -669,6 +709,8 @@ export function ReportModule({ orders }: ReportModuleProps) {
         'Invoice #': row.invoiceNo,
         'Invoice Amount': row.invoiceAmount,
         'Total Package': row.totalPackage,
+        'BU': row.bu,
+        'Document Type': row.documentType,
         'Pick Start Date/Time': row.pickStart,
         'Pick End Date/Time': row.pickEnd,
         'Picker By': row.pickerBy,
@@ -693,26 +735,56 @@ export function ReportModule({ orders }: ReportModuleProps) {
   };
 
   return (
-    <div className="bg-white rounded-3xl border-2 border-slate-900 p-5 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] space-y-5">
+    <div className={isFullscreen 
+      ? "fixed inset-0 z-50 bg-white p-6 md:p-8 overflow-y-auto space-y-6 flex flex-col animate-in fade-in duration-150" 
+      : "bg-white rounded-3xl border-2 border-slate-900 p-5 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] space-y-5"
+    }>
       
       {/* Tab controls */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b pb-4">
         <div>
-          <h3 className="text-lg font-black font-display uppercase tracking-tight text-slate-900">
-            Fulfillment Performance Reports
+          <h3 className="text-lg font-black font-display uppercase tracking-tight text-slate-900 flex items-center gap-2.5">
+            <span>Fulfillment Performance Reports</span>
+            {isFullscreen && (
+              <span className="bg-emerald-50 text-emerald-700 text-[10px] font-black uppercase px-2.5 py-1 rounded-full border border-emerald-200 tracking-wider">
+                Full Screen Active
+              </span>
+            )}
           </h3>
           <p className="text-xs text-slate-500 font-medium">
             Analyze picker outputs, checking intervals, delivery statuses, and timestamps.
           </p>
         </div>
 
-        <button
-          onClick={handleExportToExcel}
-          className="bg-indigo-600 hover:bg-indigo-700 active:translate-y-0.5 text-white py-2 px-4 rounded-xl font-bold uppercase tracking-wider text-xs border-2 border-slate-900 flex items-center justify-center gap-1.5 transition-transform cursor-pointer shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]"
-        >
-          <FileSpreadsheet className="w-4 h-4" />
-          <span>Export Excel</span>
-        </button>
+        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            className="bg-slate-100 hover:bg-slate-200 active:translate-y-0.5 text-slate-800 py-2 px-4 rounded-xl font-bold uppercase tracking-wider text-xs border-2 border-slate-900 flex items-center justify-center gap-1.5 transition-transform cursor-pointer shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] select-none"
+            title={isFullscreen ? "Exit Fullscreen" : "Fullscreen View"}
+          >
+            {isFullscreen ? (
+              <>
+                <Minimize2 className="w-4 h-4 text-rose-500" />
+                <span>Exit Fullscreen</span>
+              </>
+            ) : (
+              <>
+                <Maximize2 className="w-4 h-4 text-indigo-500" />
+                <span>Fullscreen View</span>
+              </>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleExportToExcel}
+            className="bg-indigo-600 hover:bg-indigo-700 active:translate-y-0.5 text-white py-2 px-4 rounded-xl font-bold uppercase tracking-wider text-xs border-2 border-slate-900 flex items-center justify-center gap-1.5 transition-transform cursor-pointer shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] select-none"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>Export Excel</span>
+          </button>
+        </div>
       </div>
 
       {/* Report selector grid controls */}
@@ -838,6 +910,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Total Package</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Started By</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">BU</th>
+                  <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans text-teal-200">Document Type</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans text-sky-200">Start Picking</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans text-sky-200">End Picking</th>
                   <th className="px-3.5 py-3 text-center text-[10px] font-extrabold uppercase tracking-wider font-sans text-emerald-300">Time Use</th>
@@ -846,7 +919,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
               <tbody className="bg-white divide-y divide-slate-100 font-sans text-xs">
                 {pickingRows.length === 0 ? (
                   <tr>
-                    <td colSpan={13} className="px-4 py-8 text-center italic text-slate-400 font-medium">
+                    <td colSpan={14} className="px-4 py-8 text-center italic text-slate-400 font-medium">
                       No records match the applied report filter.
                     </td>
                   </tr>
@@ -863,6 +936,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
                       <td className="px-3.5 py-2.5 whitespace-nowrap font-bold text-indigo-700">{row.totalPackage}</td>
                       <td className="px-3.5 py-2.5 font-semibold text-slate-800 whitespace-nowrap">{row.startedBy}</td>
                       <td className="px-3.5 py-2.5 font-mono whitespace-nowrap font-bold text-slate-500">{row.bu}</td>
+                      <td className="px-3.5 py-2.5 font-mono whitespace-nowrap font-bold text-teal-700">{row.documentType}</td>
                       <td className="px-3.5 py-2.5 font-mono text-slate-400 whitespace-nowrap text-[11px]">{row.startPick}</td>
                       <td className="px-3.5 py-2.5 font-mono text-slate-400 whitespace-nowrap text-[11px]">{row.endPick}</td>
                       <td className="px-3.5 py-2.5 whitespace-nowrap text-center">
@@ -895,6 +969,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Total Package</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Started By</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">BU</th>
+                  <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans text-teal-200">Document Type</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans text-pink-200">Start Checking</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans text-pink-200">End Checking</th>
                   <th className="px-3.5 py-3 text-center text-[10px] font-extrabold uppercase tracking-wider font-sans text-emerald-300">Time Use</th>
@@ -903,7 +978,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
               <tbody className="bg-white divide-y divide-slate-100 font-sans text-xs">
                 {checkingRows.length === 0 ? (
                   <tr>
-                    <td colSpan={13} className="px-4 py-8 text-center italic text-slate-400 font-medium">
+                    <td colSpan={14} className="px-4 py-8 text-center italic text-slate-400 font-medium">
                       No records match the applied report filter.
                     </td>
                   </tr>
@@ -920,6 +995,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
                       <td className="px-3.5 py-2.5 whitespace-nowrap font-bold text-indigo-700">{row.totalPackage}</td>
                       <td className="px-3.5 py-2.5 font-semibold text-slate-800 whitespace-nowrap">{row.startedBy}</td>
                       <td className="px-3.5 py-2.5 font-mono whitespace-nowrap font-bold text-slate-500">{row.bu}</td>
+                      <td className="px-3.5 py-2.5 font-mono whitespace-nowrap font-bold text-teal-700">{row.documentType}</td>
                       <td className="px-3.5 py-2.5 font-mono text-slate-400 whitespace-nowrap text-[11px]">{row.startCheck}</td>
                       <td className="px-3.5 py-2.5 font-mono text-slate-400 whitespace-nowrap text-[11px]">{row.endCheck}</td>
                       <td className="px-3.5 py-2.5 whitespace-nowrap text-center">
@@ -951,6 +1027,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Total Package</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Started By</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">BU</th>
+                  <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans text-teal-200">Document Type</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans text-sky-200">Start Picking</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans text-pink-200">End Checking</th>
                   <th className="px-3.5 py-3 text-center text-[10px] font-extrabold uppercase tracking-wider font-sans text-emerald-300">Time Use</th>
@@ -959,7 +1036,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
               <tbody className="bg-white divide-y divide-slate-100 font-sans text-xs">
                 {pickingCheckingRows.length === 0 ? (
                   <tr>
-                    <td colSpan={12} className="px-4 py-8 text-center italic text-slate-400 font-medium">
+                    <td colSpan={13} className="px-4 py-8 text-center italic text-slate-400 font-medium">
                       No records match the applied report filter.
                     </td>
                   </tr>
@@ -975,6 +1052,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
                       <td className="px-3.5 py-2.5 whitespace-nowrap font-bold text-indigo-700">{row.totalPackage}</td>
                       <td className="px-3.5 py-2.5 font-semibold text-slate-800 whitespace-nowrap">{row.startedBy}</td>
                       <td className="px-3.5 py-2.5 font-mono whitespace-nowrap font-bold text-slate-500">{row.bu}</td>
+                      <td className="px-3.5 py-2.5 font-mono whitespace-nowrap font-bold text-teal-700">{row.documentType}</td>
                       <td className="px-3.5 py-2.5 font-mono text-slate-400 whitespace-nowrap text-[11px]">{row.startPick}</td>
                       <td className="px-3.5 py-2.5 font-mono text-slate-400 whitespace-nowrap text-[11px]">{row.endCheck}</td>
                       <td className="px-3.5 py-2.5 whitespace-nowrap text-center">
@@ -1007,6 +1085,8 @@ export function ReportModule({ orders }: ReportModuleProps) {
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Invoice #</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Invoice Amount</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Total Package</th>
+                  <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">BU</th>
+                  <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans text-teal-200">Document Type</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans text-sky-200">Pick Start Date/Time</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans text-sky-200">Pick End Date/Time</th>
                   <th className="px-3.5 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Picker By</th>
@@ -1018,7 +1098,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
               <tbody className="bg-white divide-y divide-slate-100 font-sans text-xs">
                 {waitingDeliveryRows.length === 0 ? (
                   <tr>
-                    <td colSpan={16} className="px-4 py-8 text-center italic text-slate-400 font-medium">
+                    <td colSpan={18} className="px-4 py-8 text-center italic text-slate-400 font-medium">
                       No records match the applied report filter.
                     </td>
                   </tr>
@@ -1037,6 +1117,8 @@ export function ReportModule({ orders }: ReportModuleProps) {
                       <td className="px-3.5 py-2.5 font-mono text-slate-700 whitespace-nowrap font-medium">{row.invoiceNo}</td>
                       <td className="px-3.5 py-2.5 font-mono text-slate-700 whitespace-nowrap font-semibold">{row.invoiceAmount}</td>
                       <td className="px-3.5 py-2.5 whitespace-nowrap font-bold text-indigo-700">{row.totalPackage}</td>
+                      <td className="px-3.5 py-2.5 font-mono whitespace-nowrap font-bold text-slate-500">{row.bu}</td>
+                      <td className="px-3.5 py-2.5 font-mono whitespace-nowrap font-bold text-teal-700">{row.documentType}</td>
                       <td className="px-3.5 py-2.5 font-mono text-slate-400 whitespace-nowrap text-[10px]">{row.pickStart}</td>
                       <td className="px-3.5 py-2.5 font-mono text-slate-400 whitespace-nowrap text-[10px]">{row.pickEnd}</td>
                       <td className="px-3.5 py-2.5 font-semibold text-slate-800 whitespace-nowrap">{row.pickerBy}</td>
@@ -1064,6 +1146,8 @@ export function ReportModule({ orders }: ReportModuleProps) {
                   <th className="px-3 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Invoice #</th>
                   <th className="px-3 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Invoice Amount</th>
                   <th className="px-3 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Total Package</th>
+                  <th className="px-3 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">BU</th>
+                  <th className="px-3 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans text-teal-200">Document Type</th>
                   <th className="px-3 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans text-sky-200">Pick Start</th>
                   <th className="px-3 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans text-sky-200">Pick End</th>
                   <th className="px-3 py-3 text-left text-[10px] font-extrabold uppercase tracking-wider font-sans">Picker By</th>
@@ -1078,7 +1162,7 @@ export function ReportModule({ orders }: ReportModuleProps) {
               <tbody className="bg-white divide-y divide-slate-100 font-sans text-xs">
                 {masterRows.length === 0 ? (
                   <tr>
-                    <td colSpan={19} className="px-4 py-8 text-center italic text-slate-400 font-medium">
+                    <td colSpan={21} className="px-4 py-8 text-center italic text-slate-400 font-medium">
                       No records match the applied report filter.
                     </td>
                   </tr>
@@ -1097,6 +1181,8 @@ export function ReportModule({ orders }: ReportModuleProps) {
                       <td className="px-3 py-2 font-mono text-slate-700 whitespace-nowrap font-medium">{row.invoiceNo}</td>
                       <td className="px-3 py-2 font-mono text-slate-700 whitespace-nowrap font-semibold">{row.invoiceAmount}</td>
                       <td className="px-3 py-2 whitespace-nowrap font-bold text-indigo-700">{row.totalPackage}</td>
+                      <td className="px-3 py-2 font-mono whitespace-nowrap font-bold text-slate-500">{row.bu}</td>
+                      <td className="px-3 py-2 font-mono whitespace-nowrap font-bold text-teal-700">{row.documentType}</td>
                       <td className="px-3 py-2 font-mono text-slate-400 whitespace-nowrap text-[10px]">{row.pickStart}</td>
                       <td className="px-3 py-2 font-mono text-slate-400 whitespace-nowrap text-[10px]">{row.pickEnd}</td>
                       <td className="px-3 py-2 font-semibold text-slate-800 whitespace-nowrap">{row.pickerBy}</td>

@@ -22,7 +22,8 @@ import {
   CheckCircle2,
   Download,
   Upload,
-  Package
+  Package,
+  FileText
 } from 'lucide-react';
 import { CustomerMaster } from '../types';
 import {
@@ -127,6 +128,15 @@ const DEFAULT_PACKAGE_UNITS = [
   'pails'
 ];
 
+const DEFAULT_DOCUMENT_TYPES = [
+  'Invoice',
+  'Tax Invoice',
+  'Delivery Note',
+  'Cash Bill',
+  'Credit Note',
+  'Debit Note'
+];
+
 interface SetupModuleProps {
   token?: string | null;
   spreadsheetId?: string | null;
@@ -139,6 +149,7 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
   const [provinces, setProvinces] = useState<string[]>([]);
   const [bus, setBus] = useState<string[]>([]);
   const [packageUnits, setPackageUnits] = useState<string[]>([]);
+  const [documentTypes, setDocumentTypes] = useState<string[]>([]);
   const [customerMasters, setCustomerMasters] = useState<CustomerMaster[]>([]);
 
   // Confirmation state for deletes/resets to bypass iframe window.confirm block
@@ -178,6 +189,7 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
   const [provinceSearch, setProvinceSearch] = useState('');
   const [buSearch, setBuSearch] = useState('');
   const [packageUnitSearch, setPackageUnitSearch] = useState('');
+  const [documentTypeSearch, setDocumentTypeSearch] = useState('');
   const [customerMasterSearch, setCustomerMasterSearch] = useState('');
 
   // Creation text fields
@@ -186,6 +198,7 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
   const [newProvince, setNewProvince] = useState('');
   const [newBu, setNewBu] = useState('');
   const [newPackageUnit, setNewPackageUnit] = useState('');
+  const [newDocumentType, setNewDocumentType] = useState('');
 
   // New Customer Master Form State
   const [mCustName, setMCustName] = useState('');
@@ -207,6 +220,9 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
 
   const [editingPackageUnitIndex, setEditingPackageUnitIndex] = useState<number | null>(null);
   const [editingPackageUnitText, setEditingPackageUnitText] = useState('');
+
+  const [editingDocumentTypeIndex, setEditingDocumentTypeIndex] = useState<number | null>(null);
+  const [editingDocumentTypeText, setEditingDocumentTypeText] = useState('');
 
   // Customer Master Editing state
   const [editingMasterIndex, setEditingMasterIndex] = useState<number | null>(null);
@@ -239,6 +255,10 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
     const savedPackageUnits = safeStorage.getItem('scanflow_package_units');
     const initPackageUnits = savedPackageUnits ? JSON.parse(savedPackageUnits) : DEFAULT_PACKAGE_UNITS;
     setPackageUnits(initPackageUnits);
+
+    const savedDocTypes = safeStorage.getItem('scanflow_document_types');
+    const initDocTypes = savedDocTypes ? JSON.parse(savedDocTypes) : DEFAULT_DOCUMENT_TYPES;
+    setDocumentTypes(initDocTypes);
 
     const savedMasters = safeStorage.getItem('scanflow_customer_master');
     const initMasters = savedMasters ? JSON.parse(savedMasters) : DEFAULT_CUSTOMER_MASTER;
@@ -283,6 +303,13 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
             saveSetupRegistryToSheet(token, spreadsheetId, 'Packing_Units', initPackageUnits).catch(console.error);
           }
 
+          if (data.documentTypes && data.documentTypes.length > 0) {
+            setDocumentTypes(data.documentTypes);
+            safeStorage.setItem('scanflow_document_types', JSON.stringify(data.documentTypes));
+          } else {
+            saveSetupRegistryToSheet(token, spreadsheetId, 'Document_Types', initDocTypes).catch(console.error);
+          }
+
           if (data.customerMasters.length > 0) {
             setCustomerMasters(data.customerMasters);
             safeStorage.setItem('scanflow_customer_master', JSON.stringify(data.customerMasters));
@@ -310,12 +337,13 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
     showToast(message, 'success');
 
     if (token && spreadsheetId) {
-      let type: 'Customer_Registry' | 'Districts_Khan' | 'Cities_Province' | 'Business_Units' | 'Packing_Units' | null = null;
+      let type: 'Customer_Registry' | 'Districts_Khan' | 'Cities_Province' | 'Business_Units' | 'Packing_Units' | 'Document_Types' | null = null;
       if (key === 'scanflow_customers') type = 'Customer_Registry';
       else if (key === 'scanflow_khans') type = 'Districts_Khan';
       else if (key === 'scanflow_provinces') type = 'Cities_Province';
       else if (key === 'scanflow_bus') type = 'Business_Units';
       else if (key === 'scanflow_package_units') type = 'Packing_Units';
+      else if (key === 'scanflow_document_types') type = 'Document_Types';
 
       if (type) {
         try {
@@ -371,7 +399,7 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
   // Import list from Excel files (.xlsx or .xls)
   const handleImportList = (
     e: ChangeEvent<HTMLInputElement>,
-    targetType: 'customers' | 'khans' | 'provinces' | 'bus' | 'package_units'
+    targetType: 'customers' | 'khans' | 'provinces' | 'bus' | 'package_units' | 'document_types'
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -428,7 +456,10 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
                   lowerVal === 'item' ||
                   lowerVal === 'name' ||
                   lowerVal === 'value' ||
-                  lowerVal === 'registry';
+                  lowerVal === 'registry' ||
+                  lowerVal === 'document type' ||
+                  lowerVal === 'document types' ||
+                  lowerVal === 'doc type';
 
                 if (cellVal && !isHeaderName) {
                   parsedItems.push(cellVal);
@@ -495,6 +526,10 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
           currentList = packageUnits;
           storageKey = 'scanflow_package_units';
           label = 'Package Units Registry';
+        } else if (targetType === 'document_types') {
+          currentList = documentTypes;
+          storageKey = 'scanflow_document_types';
+          label = 'Document Types Registry';
         }
 
         let updatedList: string[];
@@ -520,6 +555,9 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
         } else if (targetType === 'package_units') {
           setPackageUnits(updatedList);
           updateStorage('scanflow_package_units', updatedList, `Successfully registered ${updatedList.length} items to ${label}!`);
+        } else if (targetType === 'document_types') {
+          setDocumentTypes(updatedList);
+          updateStorage('scanflow_document_types', updatedList, `Successfully registered ${updatedList.length} items to ${label}!`);
         }
       } catch (err: any) {
         showToast(`Error processing book: ${err.message || err}`, 'info');
@@ -801,6 +839,54 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
     });
   };
 
+  // --- CRUD Functions for DOCUMENT TYPES ---
+  const handleAddDocumentType = (e: FormEvent) => {
+    e.preventDefault();
+    const val = newDocumentType.trim();
+    if (!val) return;
+    if (documentTypes.some(d => d.toLowerCase() === val.toLowerCase())) {
+      showToast(`Document Type "${val}" already exists!`, 'info');
+      return;
+    }
+    const updated = [...documentTypes, val];
+    setDocumentTypes(updated);
+    setNewDocumentType('');
+    updateStorage('scanflow_document_types', updated, `Added Document Type: ${val}`);
+  };
+
+  const handleStartEditDocumentType = (index: number) => {
+    setEditingDocumentTypeIndex(index);
+    setEditingDocumentTypeText(documentTypes[index]);
+  };
+
+  const handleSaveDocumentType = (index: number) => {
+    const val = editingDocumentTypeText.trim();
+    if (!val) return;
+    const updated = [...documentTypes];
+    const oldVal = updated[index];
+    updated[index] = val;
+    setDocumentTypes(updated);
+    setEditingDocumentTypeIndex(null);
+    updateStorage('scanflow_document_types', updated, `Updated Document Type "${oldVal}" to "${val}"`);
+  };
+
+  const handleDeleteDocumentType = (index: number) => {
+    const oldVal = documentTypes[index];
+    requestConfirm({
+      title: 'Delete Document Type',
+      message: `Are you sure you want to delete Document Type "${oldVal}"?`,
+      confirmLabel: 'Delete',
+      cancelLabel: 'Cancel',
+      isDestructive: true,
+      onConfirm: () => {
+        const updated = documentTypes.filter((_, i) => i !== index);
+        setDocumentTypes(updated);
+        updateStorage('scanflow_document_types', updated, `Deleted Document Type: ${oldVal}`);
+        setConfirmModal(null);
+      }
+    });
+  };
+
   // --- CRUD Functions for CUSTOMER MASTER ---
   const handleAddCustomerMaster = async (e: FormEvent) => {
     e.preventDefault();
@@ -1002,12 +1088,14 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
         setProvinces(DEFAULT_PROVINCES);
         setBus(DEFAULT_BUs);
         setPackageUnits(DEFAULT_PACKAGE_UNITS);
+        setDocumentTypes(DEFAULT_DOCUMENT_TYPES);
         setCustomerMasters(DEFAULT_CUSTOMER_MASTER);
         safeStorage.setItem('scanflow_customers', JSON.stringify(DEFAULT_CUSTOMERS));
         safeStorage.setItem('scanflow_khans', JSON.stringify(DEFAULT_KHANS));
         safeStorage.setItem('scanflow_provinces', JSON.stringify(DEFAULT_PROVINCES));
         safeStorage.setItem('scanflow_bus', JSON.stringify(DEFAULT_BUs));
         safeStorage.setItem('scanflow_package_units', JSON.stringify(DEFAULT_PACKAGE_UNITS));
+        safeStorage.setItem('scanflow_document_types', JSON.stringify(DEFAULT_DOCUMENT_TYPES));
         safeStorage.setItem('scanflow_customer_master', JSON.stringify(DEFAULT_CUSTOMER_MASTER));
         
         if (token && spreadsheetId) {
@@ -1018,7 +1106,8 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
               provinces: DEFAULT_PROVINCES,
               bus: DEFAULT_BUs,
               packageUnits: DEFAULT_PACKAGE_UNITS,
-              customerMasters: DEFAULT_CUSTOMER_MASTER
+              customerMasters: DEFAULT_CUSTOMER_MASTER,
+              documentTypes: DEFAULT_DOCUMENT_TYPES
             });
             showToast('Successfully restored default registry values locally and on Google Sheets.', 'success');
           } catch (err) {
@@ -1752,7 +1841,142 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
           </div>
         </div>
 
-        {/* 6. CUSTOMER MASTER LIST */}
+        {/* 6. DOCUMENT TYPES REGISTRY */}
+        <div className="bg-white rounded-3xl border-2 border-slate-900 p-5 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] flex flex-col h-[565px]">
+          <div className="flex items-center justify-between border-b-2 border-slate-100 pb-3 mb-4">
+            <div className="flex items-center gap-2">
+              <span className="p-1.5 bg-indigo-100 text-indigo-600 rounded-lg">
+                <FileText className="w-4 h-4" />
+              </span>
+              <span className="font-black text-slate-900 font-display text-sm uppercase tracking-wide">
+                6. Document Types Registry
+              </span>
+            </div>
+            <span className="text-[10px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md font-mono font-bold text-slate-500">
+              {documentTypes.length} Items
+            </span>
+          </div>
+
+          {/* Import / Export Tools Row */}
+          <div className="flex gap-2 mb-3 shrink-0">
+            <button
+              type="button"
+              onClick={() => handleExportList(documentTypes, 'scanflow_document_types', 'Document Type')}
+              className="flex-1 bg-white hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-xl border-2 border-slate-900 text-xs font-bold transition-all uppercase tracking-wide flex items-center justify-center gap-1 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] active:translate-y-[1px]"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Export</span>
+            </button>
+            <label className="flex-1 bg-white hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-xl border-2 border-slate-900 text-xs font-bold transition-all uppercase tracking-wide flex items-center justify-center gap-1 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] active:translate-y-[1px] cursor-pointer text-center">
+              <Upload className="w-3.5 h-3.5" />
+              <span>Import</span>
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv,.txt"
+                onChange={(e) => handleImportList(e, 'document_types')}
+                className="hidden"
+              />
+            </label>
+          </div>
+
+          {/* Quick Create Form */}
+          <form onSubmit={handleAddDocumentType} className="flex gap-2 mb-3 shrink-0">
+            <input
+              type="text"
+              placeholder="Add new Document Type..."
+              value={newDocumentType}
+              onChange={(e) => setNewDocumentType(e.target.value)}
+              className="flex-1 bg-slate-50 border-2 border-slate-900 rounded-xl px-3 py-1.5 text-xs font-bold focus:bg-white outline-none"
+            />
+            <button
+              type="submit"
+              className="bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-xl border-2 border-slate-900 text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1 active:translate-y-[1px]"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add</span>
+            </button>
+          </form>
+
+          {/* Filter search */}
+          <div className="relative mb-3 shrink-0">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+            <input
+              type="text"
+              placeholder="Search Document Types..."
+              value={documentTypeSearch}
+              onChange={(e) => setDocumentTypeSearch(e.target.value)}
+              className="w-full bg-slate-50/50 border border-slate-200 rounded-xl pl-8 pr-3 py-1.5 text-xs font-medium outline-none focus:border-indigo-400"
+            />
+          </div>
+
+          {/* List display */}
+          <div className="flex-1 overflow-y-auto border-2 border-slate-200 rounded-2xl bg-slate-50/20 divide-y divide-slate-100">
+            {documentTypes
+              .map((val, idx) => ({ val, idx }))
+              .filter(item => item.val.toLowerCase().includes(documentTypeSearch.toLowerCase()))
+              .map(({ val, idx }) => {
+                const isEditing = editingDocumentTypeIndex === idx;
+                return (
+                  <div key={idx} className="flex items-center justify-between p-2.5 hover:bg-slate-50 transition-colors">
+                    {isEditing ? (
+                      <div className="flex items-center gap-1 flex-1">
+                        <input
+                          type="text"
+                          value={editingDocumentTypeText}
+                          onChange={(e) => setEditingDocumentTypeText(e.target.value)}
+                          className="bg-white border-2 border-slate-900 rounded-lg px-2 py-1 text-xs font-black flex-1"
+                          autoFocus
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleSaveDocumentType(idx)}
+                          className="bg-emerald-500 hover:bg-emerald-600 text-white p-1 rounded-lg border border-slate-900"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingDocumentTypeIndex(null)}
+                          className="bg-slate-200 hover:bg-slate-300 text-slate-800 p-1 rounded-lg border border-slate-300"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <span className="text-xs font-bold text-slate-800 font-sans tracking-wide truncate pr-2">
+                          {val}
+                        </span>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleStartEditDocumentType(idx)}
+                            className="p-1 hover:bg-slate-200 rounded-lg text-slate-500 hover:text-slate-800 transition-colors"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteDocumentType(idx)}
+                            className="p-1 hover:bg-rose-50 rounded-lg text-slate-400 hover:text-rose-600 transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            {documentTypes.filter(item => item.toLowerCase().includes(documentTypeSearch.toLowerCase())).length === 0 && (
+              <div className="text-center py-10 text-slate-400 text-xs italic">
+                No matching Document Types found.
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* 7. CUSTOMER MASTER LIST */}
         <div id="customer-master-section" className="col-span-1 md:col-span-2 lg:col-span-2 bg-white rounded-3xl border-2 border-slate-900 p-6 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] flex flex-col min-h-[500px]">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b-2 border-slate-100 pb-3 mb-4 gap-3">
             <div className="flex items-center gap-2">
@@ -1760,7 +1984,7 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
                 <Sparkles className="w-4 h-4" />
               </span>
               <span className="font-black text-slate-900 font-display text-sm uppercase tracking-wide">
-                6. Customer Master List (Default Routing)
+                7. Customer Master List (Default Routing)
               </span>
             </div>
             <div className="flex items-center gap-2">

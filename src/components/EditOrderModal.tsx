@@ -23,6 +23,7 @@ interface EditOrderModalProps {
   isOpen: boolean;
   onClose: () => void;
   order: Order | null;
+  orders?: Order[];
   onUpdate: (
     originalId: string,
     updatedOrder: Order
@@ -100,7 +101,7 @@ const BU_OPTIONS = [
   'BU-InterCompany'
 ];
 
-export function EditOrderModal({ isOpen, onClose, order, onUpdate }: EditOrderModalProps) {
+export function EditOrderModal({ isOpen, onClose, order, orders = [], onUpdate }: EditOrderModalProps) {
   // Form values
   const [orderId, setOrderId] = useState('');
   const [customerName, setCustomerName] = useState('');
@@ -114,6 +115,8 @@ export function EditOrderModal({ isOpen, onClose, order, onUpdate }: EditOrderMo
   const [cityProvince, setCityProvince] = useState('');
   const [assignedTo, setAssignedTo] = useState('');
   const [bu, setBu] = useState('');
+  const [documentType, setDocumentType] = useState('');
+  const [documentTypeOptions, setDocumentTypeOptions] = useState<string[]>([]);
   const [items, setItems] = useState('');
 
   // Status/Flow management
@@ -220,6 +223,10 @@ export function EditOrderModal({ isOpen, onClose, order, onUpdate }: EditOrderMo
       
       const savedBus = safeStorage.getItem('scanflow_bus');
       if (savedBus) setBusList(JSON.parse(savedBus));
+
+      const savedDocTypes = safeStorage.getItem('scanflow_document_types');
+      const docTypesList = savedDocTypes ? JSON.parse(savedDocTypes) : ['SO', 'PO', 'Invoice', 'Packing List', 'Return'];
+      setDocumentTypeOptions(docTypesList);
     }
   }, [isOpen]);
 
@@ -242,6 +249,17 @@ export function EditOrderModal({ isOpen, onClose, order, onUpdate }: EditOrderMo
       setBu(order.bu || '');
       setItems(order.items || '');
       setError(null);
+
+      // Handle Document Type options
+      const savedDocTypes = safeStorage.getItem('scanflow_document_types');
+      const docTypesList: string[] = savedDocTypes ? JSON.parse(savedDocTypes) : ['SO', 'PO', 'Invoice', 'Packing List', 'Return'];
+      const currentDocType = order.documentType || '';
+      if (currentDocType && !docTypesList.includes(currentDocType)) {
+        setDocumentTypeOptions([...docTypesList, currentDocType]);
+      } else {
+        setDocumentTypeOptions(docTypesList);
+      }
+      setDocumentType(currentDocType);
 
       // Load package units list from localStorage
       const saved = safeStorage.getItem('scanflow_package_units');
@@ -414,6 +432,37 @@ export function EditOrderModal({ isOpen, onClose, order, onUpdate }: EditOrderMo
       return;
     }
 
+    const otherOrders = orders.filter(o => o.id.trim().toUpperCase() !== order.id.trim().toUpperCase());
+
+    // 1. Check for duplicate SO# (Order ID)
+    const duplicateSo = otherOrders.find(o => o.id.trim().toUpperCase() === trimmedId);
+    if (duplicateSo) {
+      setError(`Duplicate SO# found: "${trimmedId}" is already registered for customer "${duplicateSo.customerName || 'Unknown'}".`);
+      return;
+    }
+
+    // 2. Check for duplicate Packing List#
+    const plClean = packingListNo.trim().toUpperCase();
+    const isDummyPl = !plClean || ['-', 'N/A', 'NONE', '—'].includes(plClean);
+    if (!isDummyPl) {
+      const duplicatePl = otherOrders.find(o => o.packingListNo && o.packingListNo.trim().toUpperCase() === plClean);
+      if (duplicatePl) {
+        setError(`Duplicate Packing List# found: "${plClean}" is already registered on order "${duplicatePl.id}" for customer "${duplicatePl.customerName || 'Unknown'}".`);
+        return;
+      }
+    }
+
+    // 3. Check for duplicate Invoice#
+    const invClean = invoiceNumber.trim().toUpperCase();
+    const isDummyInv = !invClean || ['-', 'N/A', 'NONE', '—'].includes(invClean);
+    if (!isDummyInv) {
+      const duplicateInv = otherOrders.find(o => o.invoiceNumber && o.invoiceNumber.trim().toUpperCase() === invClean);
+      if (duplicateInv) {
+        setError(`Duplicate Invoice# found: "${invClean}" is already registered on order "${duplicateInv.id}" for customer "${duplicateInv.customerName || 'Unknown'}".`);
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     try {
       const finalTotalPackage = packageQty.trim() ? `${packageQty.trim()} ${packageUnit}`.trim() : '';
@@ -431,6 +480,7 @@ export function EditOrderModal({ isOpen, onClose, order, onUpdate }: EditOrderMo
         cityProvince: cityProvince,
         assignedTo: assignedTo,
         bu: bu,
+        documentType: documentType,
         items: items.trim(),
         lastUpdated: new Date().toISOString()
       };
@@ -763,6 +813,26 @@ export function EditOrderModal({ isOpen, onClose, order, onUpdate }: EditOrderMo
                 >
                   <option value="">Select Business Unit</option>
                   {busList.map(opt => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Document Type Dropdown */}
+            <div className="space-y-2 col-span-1">
+              <label className="block text-[11px] font-extrabold text-slate-500 uppercase tracking-widest font-sans">
+                Document Type
+              </label>
+              <div className="rounded-xl overflow-hidden shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] border-2 border-slate-900">
+                <select
+                  value={documentType}
+                  onChange={(e) => setDocumentType(e.target.value)}
+                  className="w-full bg-slate-50 px-3 py-2.5 text-sm focus:bg-white outline-none font-bold"
+                  disabled={isSubmitting}
+                >
+                  <option value="">Select Document Type</option>
+                  {documentTypeOptions.map(opt => (
                     <option key={opt} value={opt}>{opt}</option>
                   ))}
                 </select>

@@ -102,7 +102,8 @@ const HEADERS = [
   'Assigned To',
   'BU',
   'Invoice Amount',
-  'SO Date'
+  'SO Date',
+  'Document Type'
 ];
 
 /**
@@ -155,7 +156,7 @@ export async function createOrderSpreadsheet(accessToken: string, customTitle?: 
  * Helper to write headers to Row 1
  */
 async function writeHeaders(accessToken: string, spreadsheetId: string): Promise<void> {
-  const range = `${DEFAULT_SHEET_NAME}!A1:S1`;
+  const range = `${DEFAULT_SHEET_NAME}!A1:U1`;
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
   
   const body = {
@@ -239,7 +240,7 @@ export async function fetchOrdersFromSheet(accessToken: string, spreadsheetId: s
   // Ensure the tab exists
   await ensureOrdersSheetExists(accessToken, spreadsheetId);
 
-  const range = `${DEFAULT_SHEET_NAME}!A2:S`; // Fetch all orders to avoid missing rows below 1000
+  const range = `${DEFAULT_SHEET_NAME}!A2:U`; // Fetch all orders to avoid missing rows below 1000
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}`;
   
   const res = await fetch(url, {
@@ -291,7 +292,8 @@ export async function fetchOrdersFromSheet(accessToken: string, spreadsheetId: s
       assignedTo: String(row[16] || ''),
       bu: String(row[17] || ''),
       invoiceAmount: String(row[18] || ''),
-      soDate: String(row[19] || row[9] || '')
+      soDate: String(row[19] || row[9] || ''),
+      documentType: String(row[20] || '')
     };
   }).filter(order => order.id !== ''); // Filter active IDs
 }
@@ -326,8 +328,8 @@ export async function addOrderToSheet(
   targetRowNum?: number
 ): Promise<void> {
   const range = targetRowNum 
-    ? `${DEFAULT_SHEET_NAME}!A${targetRowNum}:T${targetRowNum}`
-    : `${DEFAULT_SHEET_NAME}!A:T`;
+    ? `${DEFAULT_SHEET_NAME}!A${targetRowNum}:U${targetRowNum}`
+    : `${DEFAULT_SHEET_NAME}!A:U`;
   
   const url = targetRowNum
     ? `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`
@@ -357,7 +359,8 @@ export async function addOrderToSheet(
     order.assignedTo || '',
     order.bu || '',
     order.invoiceAmount || '',
-    formatDateTimeForSheets(order.soDate || order.lastUpdated || new Date().toISOString())
+    formatDateTimeForSheets(order.soDate || order.lastUpdated || new Date().toISOString()),
+    order.documentType || ''
   ];
 
   const res = await fetch(url, {
@@ -395,7 +398,7 @@ export async function updateOrderInSheet(
 
   // Row number is rowIndex + 2 (headers at Row 1, indices are 0-based)
   const rowNum = rowIndex + 2;
-  const range = `${DEFAULT_SHEET_NAME}!A${rowNum}:T${rowNum}`;
+  const range = `${DEFAULT_SHEET_NAME}!A${rowNum}:U${rowNum}`;
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
 
   const serializedItems = order.deliveryAttempts && order.deliveryAttempts.length > 0
@@ -422,7 +425,8 @@ export async function updateOrderInSheet(
     order.assignedTo || '',
     order.bu || '',
     order.invoiceAmount || '',
-    formatDateTimeForSheets(order.soDate || order.lastUpdated || new Date().toISOString())
+    formatDateTimeForSheets(order.soDate || order.lastUpdated || new Date().toISOString()),
+    order.documentType || ''
   ];
 
   const res = await fetch(url, {
@@ -646,7 +650,8 @@ const SETUP_SHEETS = {
   Cities_Province: { title: 'Cities_Province', header: ['City / Province'] },
   Business_Units: { title: 'Business_Units', header: ['Business Unit'] },
   Packing_Units: { title: 'Packing_Units', header: ['Packing Unit'] },
-  Customer_Master: { title: 'Customer_Master', header: ['Customer Name', 'Default Khan/District', 'Default City/Province'] }
+  Customer_Master: { title: 'Customer_Master', header: ['Customer Name', 'Default Khan/District', 'Default City/Province'] },
+  Document_Types: { title: 'Document_Types', header: ['Document Type'] }
 };
 
 // Global in-memory cache map to deduplicate concurrent setup creation calls
@@ -748,7 +753,8 @@ export async function fetchSetupDataFromSheet(accessToken: string, spreadsheetId
     'Cities_Province!A2:A',
     'Business_Units!A2:A',
     'Packing_Units!A2:A',
-    'Customer_Master!A2:C'
+    'Customer_Master!A2:C',
+    'Document_Types!A2:A'
   ];
 
   const queryRanges = ranges.map(r => `ranges=${encodeURIComponent(r)}`).join('&');
@@ -786,7 +792,8 @@ export async function fetchSetupDataFromSheet(accessToken: string, spreadsheetId
     provinces: parseStringList(valueRanges[2]),
     bus: parseStringList(valueRanges[3]),
     packageUnits: parseStringList(valueRanges[4]),
-    customerMasters: parseCustomerMasterList(valueRanges[5])
+    customerMasters: parseCustomerMasterList(valueRanges[5]),
+    documentTypes: valueRanges[6] ? parseStringList(valueRanges[6]) : []
   };
 }
 
@@ -796,7 +803,7 @@ export async function fetchSetupDataFromSheet(accessToken: string, spreadsheetId
 export async function saveSetupRegistryToSheet(
   accessToken: string,
   spreadsheetId: string,
-  type: 'Customer_Registry' | 'Districts_Khan' | 'Cities_Province' | 'Business_Units' | 'Packing_Units',
+  type: 'Customer_Registry' | 'Districts_Khan' | 'Cities_Province' | 'Business_Units' | 'Packing_Units' | 'Document_Types',
   items: string[]
 ): Promise<void> {
   await ensureSetupSheetsExist(accessToken, spreadsheetId);
@@ -891,6 +898,7 @@ export async function saveAllSetupToSheets(
     bus: string[];
     packageUnits: string[];
     customerMasters: CustomerMaster[];
+    documentTypes: string[];
   }
 ): Promise<void> {
   await ensureSetupSheetsExist(accessToken, spreadsheetId);
@@ -900,6 +908,7 @@ export async function saveAllSetupToSheets(
     saveSetupRegistryToSheet(accessToken, spreadsheetId, 'Cities_Province', data.provinces),
     saveSetupRegistryToSheet(accessToken, spreadsheetId, 'Business_Units', data.bus),
     saveSetupRegistryToSheet(accessToken, spreadsheetId, 'Packing_Units', data.packageUnits),
+    saveSetupRegistryToSheet(accessToken, spreadsheetId, 'Document_Types', data.documentTypes),
     saveSetupCustomerMastersToSheet(accessToken, spreadsheetId, data.customerMasters)
   ]);
 }

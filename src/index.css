@@ -1,10 +1,10 @@
 @import "tailwindcss";
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Battambang:wght@400;700;900&family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap');
 
 @theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-display: "Space Grotesk", sans-serif;
+  --font-sans: "Inter", "Battambang", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-display: "Space Grotesk", "Battambang", sans-serif;
   --font-mono: "Fira Code", monospace;
   
   --color-brand-50: #f4f7fb;
@@ -82,3 +82,16 @@ body {
     print-color-adjust: exact !important;
   }
 }
+
+.font-battambang {
+  font-family: "Battambang", "Inter", sans-serif !important;
+}
+
+.font-battambang .font-display,
+.font-battambang h1,
+.font-battambang h2,
+.font-battambang h3,
+.font-battambang h4 {
+  font-family: "Battambang", "Space Grotesk", sans-serif !important;
+}
+

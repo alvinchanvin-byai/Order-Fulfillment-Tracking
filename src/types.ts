@@ -47,6 +47,7 @@ export interface Order {
   bu?: string;
   invoiceAmount?: string;
   soDate?: string;
+  documentType?: string;
 }
 
 export interface ScanResult {
