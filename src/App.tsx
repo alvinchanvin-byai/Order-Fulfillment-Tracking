@@ -3736,7 +3736,6 @@ export default function App() {
                   <table className="w-full min-w-[1550px] border-collapse text-left font-sans text-xs border border-slate-900">
                     <thead>
                       <tr className="bg-slate-100 border-b-2 border-slate-900">
-                        <th className="sticky top-0 bg-slate-100 px-3.5 py-3 border-r border-b-2 border-slate-900 font-black text-slate-950 uppercase tracking-wider z-20 text-[11px] w-px whitespace-nowrap">{t('status')}</th>
                         <th className="sticky top-0 bg-slate-100 px-3.5 py-3 border-r border-b-2 border-slate-900 font-black text-slate-950 uppercase tracking-wider z-20 text-[11px] w-px whitespace-nowrap">{t('date')}</th>
                         <th className="sticky top-0 bg-slate-100 px-3.5 py-3 border-r border-b-2 border-slate-900 font-black text-slate-950 uppercase tracking-wider z-20 text-[11px] w-px whitespace-nowrap">{t('soNo')}</th>
                         <th className="sticky top-0 bg-slate-100 px-3.5 py-3 border-r border-b-2 border-slate-900 font-black text-slate-950 uppercase tracking-wider z-20 text-[11px] min-w-[230px]">{t('customerName')}</th>
@@ -3749,6 +3748,7 @@ export default function App() {
                         <th className="sticky top-0 bg-slate-100 px-3.5 py-3 border-r border-b-2 border-slate-900 font-black text-slate-950 uppercase tracking-wider z-20 text-[11px] w-px whitespace-nowrap">{t('docType')}</th>
                         <th className="sticky top-0 bg-slate-100 px-3.5 py-3 border-r border-b-2 border-slate-900 font-black text-slate-950 uppercase tracking-wider z-20 text-[11px] min-w-[200px] max-w-[320px]">{t('note')}</th>
                         <th className="sticky top-0 bg-slate-100 px-3.5 py-3 border-r border-b-2 border-slate-900 font-black text-slate-950 uppercase tracking-wider z-20 text-[11px] w-px whitespace-nowrap">{t('action')}</th>
+                        <th className="sticky top-0 bg-slate-100 px-3.5 py-3 border-r border-b-2 border-slate-900 font-black text-slate-950 uppercase tracking-wider z-20 text-[11px] w-px whitespace-nowrap">{t('status')}</th>
                       </tr>
                     </thead>
                     <tbody className="bg-white">
@@ -3765,11 +3765,6 @@ export default function App() {
                                 : 'bg-white'
                             }`}
                           >
-                            <td className="px-3.5 py-3 border-r border-b border-slate-900 font-sans font-bold text-[12px] whitespace-nowrap">
-                              <span className={`px-2 py-1 rounded-lg border text-[10px] font-black uppercase tracking-wider whitespace-nowrap ${getStageBadgeColor(order.status, order)}`}>
-                                {getStageLabel(order.status, order)}
-                              </span>
-                            </td>
                             <td className="px-3.5 py-3 border-r border-b border-slate-900 font-sans text-[11.5px] font-medium whitespace-nowrap">
                               {formatDateOnly(order.soDate || order.lastUpdated)}
                             </td>
@@ -3845,6 +3840,11 @@ export default function App() {
                                   <CheckCircle2 className="w-3.5 h-3.5" /> FULFILLED
                                 </span>
                               )}
+                            </td>
+                            <td className="px-3.5 py-3 border-r border-b border-slate-900 font-sans font-bold text-[12px] whitespace-nowrap">
+                              <span className={`px-2 py-1 rounded-lg border text-[10px] font-black uppercase tracking-wider whitespace-nowrap ${getStageBadgeColor(order.status, order)}`}>
+                                {getStageLabel(order.status, order)}
+                              </span>
                             </td>
                           </tr>
                         );
