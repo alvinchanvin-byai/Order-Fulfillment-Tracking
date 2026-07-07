@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, FormEvent, useEffect } from 'react';
-import { X, Package, Info, QrCode, Clipboard, Camera, AlertCircle, Sparkles, Check } from 'lucide-react';
+import { useState, FormEvent, useEffect, useRef } from 'react';
+import { X, Package, Info, QrCode, Clipboard, Camera, AlertCircle, Sparkles, Check, Search } from 'lucide-react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { Order, CustomerMaster, formatAccounting } from '../types';
 import { safeStorage } from '../lib/storage';
@@ -130,6 +130,28 @@ export function OrderFormModal({ isOpen, onClose, orders = [], onAdd }: OrderFor
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Search box customer selection states
+  const [customerSearchQuery, setCustomerSearchQuery] = useState('');
+  const [isCustomerDropdownOpen, setIsCustomerDropdownOpen] = useState(false);
+  const customerContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setCustomerSearchQuery(customerName);
+  }, [customerName]);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (customerContainerRef.current && !customerContainerRef.current.contains(event.target as Node)) {
+        setIsCustomerDropdownOpen(false);
+        setCustomerSearchQuery(customerName);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [customerName]);
 
   useEffect(() => {
     if (isOpen) {
@@ -624,23 +646,107 @@ export function OrderFormModal({ isOpen, onClose, orders = [], onAdd }: OrderFor
               </div>
             </div>
 
-            {/* Field 2: Select Customer */}
-            <div className="space-y-2 col-span-1 md:col-span-2 lg:col-span-2">
+            {/* Field 2: Select Customer (Search Box) */}
+            <div className="space-y-2 col-span-1 md:col-span-2 lg:col-span-2 relative" ref={customerContainerRef}>
               <label className="block text-[11px] font-extrabold text-slate-500 uppercase tracking-widest font-sans">
                 Select Customer
               </label>
-              <div className="rounded-xl overflow-hidden shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] border-2 border-slate-900">
-                <select
-                  value={customerName}
-                  onChange={(e) => handleCustomerSelection(e.target.value)}
-                  className="w-full bg-slate-50 px-3 py-2.5 text-sm focus:bg-white outline-none font-bold"
-                  disabled={isSubmitting}
-                >
-                  <option value="">Select Customer</option>
-                  {customersList.map(opt => (
-                    <option key={opt} value={opt}>{opt}</option>
-                  ))}
-                </select>
+              <div className="relative">
+                <div className="flex rounded-xl overflow-hidden shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] border-2 border-slate-900 focus-within:ring-2 focus-within:ring-slate-900 bg-slate-50">
+                  <div className="flex items-center pl-3 text-slate-400">
+                    <Search className="w-4 h-4 shrink-0" />
+                  </div>
+                  <input
+                    type="text"
+                    value={customerSearchQuery}
+                    onChange={(e) => {
+                      setCustomerSearchQuery(e.target.value);
+                      setIsCustomerDropdownOpen(true);
+                      // In case they empty it, clear customer selection
+                      if (!e.target.value) {
+                        handleCustomerSelection('');
+                      }
+                    }}
+                    onFocus={() => {
+                      setIsCustomerDropdownOpen(true);
+                    }}
+                    placeholder="Search customer name..."
+                    className="w-full bg-transparent px-3 py-2.5 text-sm outline-none font-bold placeholder:text-slate-400"
+                    disabled={isSubmitting}
+                  />
+                  {customerSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomerSearchQuery('');
+                        handleCustomerSelection('');
+                        setIsCustomerDropdownOpen(false);
+                      }}
+                      className="px-3 hover:bg-slate-200 text-slate-500 border-l border-slate-200 transition-colors cursor-pointer flex items-center justify-center shrink-0"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Search Result Dropdown Panel */}
+                {isCustomerDropdownOpen && (
+                  <div className="absolute z-50 left-0 right-0 mt-1 bg-white border-2 border-slate-900 rounded-xl shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] max-h-60 overflow-y-auto overflow-x-hidden font-sans">
+                    {(() => {
+                      const query = customerSearchQuery.trim().toLowerCase();
+                      const filtered = customersList.filter(opt => 
+                        opt.toLowerCase().includes(query)
+                      );
+                      
+                      return (
+                        <div className="py-1 divide-y divide-slate-100">
+                          {filtered.length > 0 ? (
+                            filtered.map((opt) => (
+                              <button
+                                key={opt}
+                                type="button"
+                                onClick={() => {
+                                  setCustomerSearchQuery(opt);
+                                  handleCustomerSelection(opt);
+                                  setIsCustomerDropdownOpen(false);
+                                }}
+                                className={`w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-slate-50 active:bg-slate-100 transition-colors flex items-center justify-between ${
+                                  customerName === opt ? 'bg-amber-50 text-amber-950' : 'text-slate-800'
+                                }`}
+                              >
+                                <span className="truncate pr-4">{opt}</span>
+                                {customerName === opt && <Check className="w-3.5 h-3.5 text-amber-600 shrink-0" />}
+                              </button>
+                            ))
+                          ) : (
+                            <div className="px-4 py-3 text-xs text-slate-400 italic">
+                              No matching customers found in setup & config.
+                            </div>
+                          )}
+
+                          {/* Custom Option selection */}
+                          {customerSearchQuery.trim() && !customersList.some(opt => opt.toLowerCase() === query) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const customVal = customerSearchQuery.trim();
+                                handleCustomerSelection(customVal);
+                                setIsCustomerDropdownOpen(false);
+                              }}
+                              className="w-full text-left px-4 py-3 text-xs font-black text-amber-900 hover:bg-amber-50 bg-slate-50 border-t border-slate-200 flex items-center justify-between transition-colors"
+                            >
+                              <div className="flex flex-col">
+                                <span className="text-[9px] uppercase tracking-wider text-amber-600 font-extrabold font-sans">Use typed customer name:</span>
+                                <span className="truncate pr-4">"{customerSearchQuery.trim()}"</span>
+                              </div>
+                              <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
               </div>
             </div>
 
