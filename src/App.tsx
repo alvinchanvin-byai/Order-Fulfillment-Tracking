@@ -1882,7 +1882,7 @@ export default function App() {
     ];
 
     return (
-      <div className={`bg-white rounded-3xl border-2 border-slate-900 p-5 flex flex-col justify-between gap-4 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] ${
+      <div id="system-kpi-container" className={`bg-white rounded-3xl border-2 border-slate-900 p-3 sm:p-4 md:p-5 flex flex-col justify-between gap-4 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] ${
         currentTab === 'registry' ? 'w-full' : ''
       }`}>
         <div className="flex items-center justify-between">
@@ -2528,7 +2528,7 @@ export default function App() {
 
 
   return (
-    <div className={`min-h-screen flex flex-col bg-[#F8FAFC] relative selection:bg-slate-900/10 text-slate-900 ${lang === 'km' ? 'font-battambang' : 'font-sans'}`}>
+    <div className={`min-h-screen w-full max-w-full overflow-x-hidden flex flex-col bg-[#F8FAFC] relative selection:bg-slate-900/10 text-slate-900 ${lang === 'km' ? 'font-battambang' : 'font-sans'}`}>
       
       {/* Top Bento Professional App Header */}
       <header className="sticky top-0 bg-white border-b-2 border-slate-900 px-4 py-3 sm:px-6 sm:py-4 flex flex-col md:flex-row md:items-center justify-between gap-3 z-40 shadow-sm">
@@ -2909,8 +2909,8 @@ export default function App() {
       )}
 
       {/* Main Container Content */}
-      <main className={`flex-1 w-full mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6 ${
-        currentTab === 'registry' || currentTab === 'reports' ? 'max-w-none px-4 sm:px-6' : 'max-w-7xl'
+      <main className={`flex-1 w-full max-w-full overflow-x-hidden mx-auto p-2 sm:p-4 md:p-6 space-y-3 sm:space-y-4 md:space-y-6 ${
+        currentTab === 'registry' || currentTab === 'reports' ? 'px-2 sm:px-4 md:px-6' : 'max-w-7xl'
       }`}>
 
         {/* Premium Google Sheets Connection Status Bar (Matches image style perfectly) */}
@@ -3091,11 +3091,11 @@ export default function App() {
         ) : currentTab === 'users' ? (
           <UsersModule token={token} spreadsheetId={spreadsheetId} />
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 w-full min-w-0">
           
           {/* LEFT COLUMN */}
           {currentTab === 'scanner' && (
-            <section className="space-y-6 flex flex-col lg:col-span-6">
+            <section className="space-y-6 flex flex-col lg:col-span-6 w-full min-w-0">
               
               {/* Scanner Terminal Card */}
               <div className="bg-slate-900 rounded-3xl border-2 border-slate-900 p-6 relative overflow-hidden flex flex-col justify-between shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] text-white">
@@ -3196,7 +3196,7 @@ export default function App() {
           )}
 
           {/* RIGHT COLUMN */}
-          <section className={`space-y-6 flex flex-col ${
+          <section className={`space-y-6 flex flex-col w-full min-w-0 ${
             currentTab === 'registry' ? 'lg:col-span-12' : 'lg:col-span-6'
           }`}>
             
@@ -3204,7 +3204,7 @@ export default function App() {
             {currentTab === 'registry' ? (
               <>
                 {renderKpiSection()}
-                <div className="bg-white rounded-3xl border-2 border-slate-900 p-6 flex flex-col flex-1 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)]">
+                <div id="order-registry-main-panel" className="bg-white rounded-3xl border-2 border-slate-900 p-2.5 sm:p-4 md:p-6 flex flex-col flex-1 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] w-full min-w-0">
             
             {/* Action Bar */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5 border-b-2 border-slate-900 pb-5">
@@ -3365,7 +3365,7 @@ export default function App() {
             </div>
 
             {/* Table or Card list container */}
-            <div className="flex-grow overflow-auto max-h-[calc(100vh-340px)] lg:max-h-[calc(100vh-280px)] scrollbar-thin border-2 border-slate-900 rounded-2xl shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] bg-white relative">
+            <div id="order-registry-table-container" className="flex-grow overflow-x-auto overflow-y-auto max-w-full max-h-[calc(100vh-340px)] lg:max-h-[calc(100vh-280px)] scrollbar-thin border-2 border-slate-900 rounded-2xl shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] bg-white relative">
               {isLoadingOrders && orders.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16 text-slate-400">
                   <RefreshCw className="w-7 h-7 animate-spin text-brand-600 mb-2" />

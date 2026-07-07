@@ -95,3 +95,132 @@ body {
   font-family: "Battambang", "Space Grotesk", sans-serif !important;
 }
 
+/* --- Mobile Landscape and Device Rotation Safe Area Optimizations --- */
+html, body, #root {
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  min-height: 100vh;
+}
+
+@supports (padding: env(safe-area-inset-left)) {
+  body {
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
+
+/* Detect narrow heights (landscape phones) and tighten layout vertically & horizontally to be full-width */
+@media (max-height: 480px) and (orientation: landscape) {
+  body {
+    background-color: #f8fafc !important;
+  }
+  
+  /* Make header non-sticky so it scrolls away instantly on swipe up */
+  header {
+    position: static !important;
+  }
+  
+  /* Hide the large KPI indicator cards to maximize space for transaction records */
+  #system-kpi-container {
+    display: none !important;
+  }
+  
+  /* Reduce outer padding of main to maximize content area on rotated screens */
+  main {
+    padding: 6px !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+  }
+  
+  /* Make sure spacing/margins are compact in landscape mode */
+  .space-y-3 > :not([hidden]) ~ :not([hidden]),
+  .space-y-4 > :not([hidden]) ~ :not([hidden]) {
+    margin-top: 6px !important;
+    margin-bottom: 0px !important;
+  }
+  
+  .space-y-6 > :not([hidden]) ~ :not([hidden]) {
+    margin-top: 8px !important;
+    margin-bottom: 0px !important;
+  }
+  
+  /* Compact cards and panels for landscape orientation */
+  .rounded-3xl {
+    border-radius: 12px !important;
+  }
+  
+  #order-registry-main-panel {
+    padding: 10px !important;
+  }
+  
+  /* Compress the Action Bar inside the Registry Panel */
+  #order-registry-main-panel .border-b-2.border-slate-900.pb-5 {
+    margin-bottom: 8px !important;
+    padding-bottom: 8px !important;
+    gap: 6px !important;
+  }
+  
+  #order-registry-main-panel .border-b-2.border-slate-900.pb-5 h2 {
+    font-size: 14px !important;
+  }
+  
+  #order-registry-main-panel .border-b-2.border-slate-900.pb-5 p {
+    display: none !important; /* Hide description text to save vertical space */
+  }
+
+  /* Compact the Search query bar */
+  #order-registry-main-panel .relative.mb-5 {
+    margin-bottom: 8px !important;
+  }
+  
+  #order-registry-main-panel .relative.mb-5 input {
+    padding-top: 6px !important;
+    padding-bottom: 6px !important;
+  }
+
+  /* Compact table row padding to fit 5+ rows comfortably in limited viewport height */
+  #order-registry-table-container th {
+    padding-top: 6px !important;
+    padding-bottom: 6px !important;
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+    font-size: 10px !important;
+  }
+  
+  #order-registry-table-container td {
+    padding-top: 5px !important;
+    padding-bottom: 5px !important;
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+    font-size: 11px !important;
+  }
+
+  /* Shrink badge & button sizes inside cells */
+  #order-registry-table-container td span {
+    padding-top: 2px !important;
+    padding-bottom: 2px !important;
+    font-size: 9px !important;
+  }
+
+  #order-registry-table-container td button {
+    padding-top: 3px !important;
+    padding-bottom: 3px !important;
+    padding-left: 6px !important;
+    padding-right: 6px !important;
+    font-size: 9px !important;
+  }
+  
+  /* Expand the table container height to occupy the majority of viewport */
+  #order-registry-table-container {
+    max-height: 65vh !important;
+    min-height: 220px !important;
+    border-radius: 12px !important;
+  }
+}
+
+
