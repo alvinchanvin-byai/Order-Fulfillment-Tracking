@@ -42,7 +42,9 @@ import {
   Calendar,
   Receipt,
   Clipboard,
-  DollarSign
+  DollarSign,
+  Maximize2,
+  Minimize2
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -210,11 +212,88 @@ const translations = {
   }
 };
 
+const OFFLINE_SAMPLE_ORDERS: Order[] = [
+  {
+    id: 'ORD-1001',
+    status: 'PENDING_PICKING',
+    pickStart: '',
+    pickEnd: '',
+    checkStart: '',
+    checkEnd: '',
+    deliveryStart: '',
+    deliveryEnd: '',
+    items: '3x Active Smartwatch Series X, 1x Charging Cradle',
+    lastUpdated: new Date().toISOString(),
+    customerName: 'Pracheachun Pharmacy (SHV)',
+    packingListNo: 'PL-5001',
+    totalPackage: '2',
+    invoiceNumber: 'INV-7001',
+    khanDistrict: 'Preah Sihanouk Municipality',
+    cityProvince: 'Preah Sihanouk',
+    assignedTo: 'admin',
+    bu: 'Electronics',
+    documentType: 'Invoice',
+    invoiceAmount: '150.00',
+    soDate: new Date().toISOString()
+  },
+  {
+    id: 'ORD-1002',
+    status: 'READY_CHECKING',
+    pickStart: new Date(Date.now() - 3600000).toISOString(),
+    pickEnd: new Date(Date.now() - 3000000).toISOString(),
+    checkStart: '',
+    checkEnd: '',
+    deliveryStart: '',
+    deliveryEnd: '',
+    items: '2x Wireless Noise-Cancelling Earphones Pro',
+    lastUpdated: new Date().toISOString(),
+    customerName: 'Ponleu Pich Cabinet',
+    packingListNo: 'PL-5002',
+    totalPackage: '1',
+    invoiceNumber: 'INV-7002',
+    khanDistrict: 'Dangkao',
+    cityProvince: 'Phnom Penh',
+    assignedTo: 'csp',
+    bu: 'Audio',
+    documentType: 'Invoice',
+    invoiceAmount: '80.00',
+    soDate: new Date().toISOString()
+  },
+  {
+    id: 'ORD-1003',
+    status: 'READY_DELIVERY',
+    pickStart: new Date(Date.now() - 7200000).toISOString(),
+    pickEnd: new Date(Date.now() - 6700000).toISOString(),
+    checkStart: new Date(Date.now() - 6500000).toISOString(),
+    checkEnd: new Date(Date.now() - 6000000).toISOString(),
+    deliveryStart: '',
+    deliveryEnd: '',
+    items: '1x Ergonomic Lumbar Mesh Office Chair (Black)',
+    lastUpdated: new Date().toISOString(),
+    customerName: 'Cambodian Healthcare Instrument Co., Ltd',
+    packingListNo: 'PL-5003',
+    totalPackage: '3',
+    invoiceNumber: 'INV-7003',
+    khanDistrict: 'Chamkar Mon',
+    cityProvince: 'Phnom Penh',
+    assignedTo: 'mbk',
+    bu: 'Furniture',
+    documentType: 'Invoice',
+    invoiceAmount: '220.00',
+    soDate: new Date().toISOString()
+  }
+];
+
 export default function App() {
   // Auth state
   const [user, setUser] = useState<any>(null);
   const [token, setToken] = useState<string | null>(null);
-  const [needsAuth, setNeedsAuth] = useState(true);
+  const [isOfflineMode, setIsOfflineMode] = useState<boolean>(() => {
+    return safeStorage.getItem('scanflow_offline_mode') === 'true';
+  });
+  const [needsAuth, setNeedsAuth] = useState(() => {
+    return safeStorage.getItem('scanflow_offline_mode') !== 'true';
+  });
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   // System credentials session state
@@ -246,15 +325,75 @@ export default function App() {
       const cached = safeStorage.getItem('offline_orders_snapshot');
       if (cached) {
         const parsed = JSON.parse(cached);
-        if (parsed && Array.isArray(parsed.orders)) {
+        if (parsed && Array.isArray(parsed.orders) && parsed.orders.length > 0) {
           return parsed.orders;
         }
       }
     } catch (e) {
       console.error('Failed to restore offline orders snapshot', e);
     }
-    return [];
+    return OFFLINE_SAMPLE_ORDERS;
   });
+
+  const saveOrUpdateOrder = async (updatedOrder: Order, originalId?: string) => {
+    if (isOfflineMode) {
+      setOrders(prev => {
+        let updated: Order[];
+        if (originalId) {
+          updated = prev.map(o => o.id === originalId ? updatedOrder : o);
+        } else {
+          const exists = prev.some(o => o.id === updatedOrder.id);
+          if (exists) {
+            updated = prev.map(o => o.id === updatedOrder.id ? updatedOrder : o);
+          } else {
+            updated = [...prev, updatedOrder];
+          }
+        }
+        safeStorage.setItem('offline_orders_snapshot', JSON.stringify({
+          lastSync: new Date().toISOString(),
+          orders: updated
+        }));
+        return updated;
+      });
+      if (selectedOrder && (selectedOrder.id === updatedOrder.id || (originalId && selectedOrder.id === originalId))) {
+        setSelectedOrder(updatedOrder);
+      }
+    } else {
+      if (!token || !spreadsheetId) {
+        throw new Error('Google connection is required to update order records in cloud spreadsheet.');
+      }
+      if (originalId) {
+        await updateOrderInSheet(token, spreadsheetId, orders, updatedOrder, originalId);
+      } else {
+        const exists = orders.some(o => o.id === updatedOrder.id);
+        if (exists) {
+          await updateOrderInSheet(token, spreadsheetId, orders, updatedOrder);
+        } else {
+          const nextRow = orders.length + 2;
+          await addOrderToSheet(token, spreadsheetId, updatedOrder, nextRow);
+        }
+      }
+      
+      setOrders(prev => {
+        let updated: Order[];
+        if (originalId) {
+          updated = prev.map(o => o.id === originalId ? updatedOrder : o);
+        } else {
+          const exists = prev.some(o => o.id === updatedOrder.id);
+          if (exists) {
+            updated = prev.map(o => o.id === updatedOrder.id ? updatedOrder : o);
+          } else {
+            updated = [...prev, updatedOrder];
+          }
+        }
+        return updated;
+      });
+      if (selectedOrder && (selectedOrder.id === updatedOrder.id || (originalId && selectedOrder.id === originalId))) {
+        setSelectedOrder(updatedOrder);
+      }
+      handleRefreshOrders();
+    }
+  };
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
   const [activeFilter, setActiveFilter] = useState<'All' | 'Registered' | 'Picking' | 'Checking' | 'Waiting Delivery' | 'Delivery' | 'Completed' | 'Incomplete' | 'Success' | 'Return'>('All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -359,6 +498,37 @@ export default function App() {
     confirmText: '',
     onConfirm: () => {}
   });
+
+  // Fullscreen state for Order Registry
+  const [isRegistryFullscreen, setIsRegistryFullscreen] = useState(false);
+
+  useEffect(() => {
+    const handleRegistryFullscreenChange = () => {
+      setIsRegistryFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleRegistryFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleRegistryFullscreenChange);
+    };
+  }, []);
+
+  const toggleRegistryFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().then(() => {
+        setIsRegistryFullscreen(true);
+      }).catch((err) => {
+        console.warn(`Error attempting to enable fullscreen: ${err.message}`);
+        // Fallback to CSS-only fullscreen
+        setIsRegistryFullscreen(true);
+      });
+    } else {
+      document.exitFullscreen().then(() => {
+        setIsRegistryFullscreen(false);
+      }).catch(() => {
+        setIsRegistryFullscreen(false);
+      });
+    }
+  };
 
   // Scanner Terminal State
   const [barcodeInput, setBarcodeInput] = useState('');
@@ -498,17 +668,21 @@ export default function App() {
 
   // Initialize auth
   useEffect(() => {
-    initAuth(
-      (currentUser, accessToken) => {
-        setUser(currentUser);
-        setToken(accessToken);
-        setCachedToken(accessToken);
-        setNeedsAuth(false);
-      },
-      () => {
-        setNeedsAuth(true);
-      }
-    );
+    if (isOfflineMode) {
+      setNeedsAuth(false);
+    } else {
+      initAuth(
+        (currentUser, accessToken) => {
+          setUser(currentUser);
+          setToken(accessToken);
+          setCachedToken(accessToken);
+          setNeedsAuth(false);
+        },
+        () => {
+          setNeedsAuth(true);
+        }
+      );
+    }
 
     // Retrieve saved spreadsheet from localStorage
     const savedConfig = safeStorage.getItem('order_tracker_sheet_config');
@@ -716,9 +890,15 @@ export default function App() {
         setCachedToken(result.accessToken);
         setUser(result.user);
         setNeedsAuth(false);
+        setIsOfflineMode(false);
+        safeStorage.setItem('scanflow_offline_mode', 'false');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Oauth login failed', err);
+      alert(`Google Sign-In Failed: ${err.message || err}.\n\nActivating Standalone Offline Storage Mode (saves directly to your browser storage) so you can use the application fully.`);
+      setIsOfflineMode(true);
+      safeStorage.setItem('scanflow_offline_mode', 'true');
+      setNeedsAuth(false);
     } finally {
       setIsLoggingIn(false);
     }
@@ -730,8 +910,12 @@ export default function App() {
     setUser(null);
     setToken(null);
     setCachedToken(null);
-    setNeedsAuth(true);
-    setOrders([]);
+    if (!isOfflineMode) {
+      setNeedsAuth(true);
+      setOrders([]);
+    } else {
+      setNeedsAuth(false);
+    }
     setSelectedOrder(null);
   };
 
@@ -825,6 +1009,7 @@ export default function App() {
 
   // Pull orders from sheets
   const handleRefreshOrders = async () => {
+    if (isOfflineMode) return;
     if (!token || !spreadsheetId) return;
     setIsLoadingOrders(true);
     try {
@@ -948,7 +1133,7 @@ export default function App() {
       return;
     }
 
-    if (!token || !spreadsheetId) return;
+    if (!isOfflineMode && (!token || !spreadsheetId)) return;
 
     // Reject duplicates client side
     if (orders.some(o => o.id === orderId)) {
@@ -979,9 +1164,7 @@ export default function App() {
       soDate: new Date().toISOString()
     };
 
-    const nextRow = orders.length + 2;
-    await addOrderToSheet(token, spreadsheetId, newOrder, nextRow);
-    await handleRefreshOrders();
+    await saveOrUpdateOrder(newOrder);
     
     // Auto insert an audit/scan log for creation
     addScanReceipt({
@@ -1140,13 +1323,7 @@ export default function App() {
     // Write change back to Spreadsheet
     setIsLoadingOrders(true);
     try {
-      await updateOrderInSheet(token!, spreadsheetId, orders, updatedOrder);
-      
-      // Update local state to reflect instantly
-      setOrders(prev => prev.map(o => o.id === order.id ? updatedOrder : o));
-      if (selectedOrder?.id === order.id) {
-        setSelectedOrder(updatedOrder);
-      }
+      await saveOrUpdateOrder(updatedOrder);
 
       setManualScanMessage({ text: `Approved: Match found (${cleaned}). ${order.id} moved to ${getStageLabel(nextStage)}`, isError: false });
       addScanReceipt({
@@ -1242,12 +1419,7 @@ export default function App() {
     };
 
     try {
-      await updateOrderInSheet(token, spreadsheetId, orders, updatedOrder);
-      
-      setOrders(prev => prev.map(o => o.id === pendingDeliveryOrderId ? updatedOrder : o));
-      if (selectedOrder?.id === pendingDeliveryOrderId) {
-        setSelectedOrder(updatedOrder);
-      }
+      await saveOrUpdateOrder(updatedOrder);
 
       setManualScanMessage({
         text: `Success: Order ${pendingDeliveryOrderId} delivery complete. Status logged as: [${outcome}]`,
@@ -1509,11 +1681,7 @@ export default function App() {
     }
 
     try {
-      await updateOrderInSheet(token, spreadsheetId, orders, updatedOrder);
-      setOrders(prev => prev.map(o => o.id === order.id ? updatedOrder : o));
-      if (selectedOrder?.id === order.id) {
-        setSelectedOrder(updatedOrder);
-      }
+      await saveOrUpdateOrder(updatedOrder);
 
       addScanReceipt({
         orderId: order.id,
@@ -1570,9 +1738,7 @@ export default function App() {
         }
 
         try {
-          await updateOrderInSheet(token, spreadsheetId, orders, updatedOrder);
-          setOrders(prev => prev.map(o => o.id === selectedOrder.id ? updatedOrder : o));
-          setSelectedOrder(updatedOrder);
+          await saveOrUpdateOrder(updatedOrder);
           
           addScanReceipt({
             orderId: selectedOrder.id,
@@ -1601,22 +1767,14 @@ export default function App() {
       return;
     }
 
-    if (!token || !spreadsheetId) {
+    if (!isOfflineMode && (!token || !spreadsheetId)) {
       throw new Error("Authentication or Google Sheets configuration is missing.");
     }
 
     setIsLoadingOrders(true);
     try {
       // Call update API with the sheet update function supporting original lookup ID
-      await updateOrderInSheet(token, spreadsheetId, orders, updatedOrder, originalId);
-
-      // Swap the order inside the local collection
-      setOrders(prev => prev.map(o => o.id === originalId ? updatedOrder : o));
-
-      // Synchronize active selected order details
-      if (selectedOrder?.id === originalId) {
-        setSelectedOrder(updatedOrder);
-      }
+      await saveOrUpdateOrder(updatedOrder, originalId);
 
       // Add audit scanning receipt logs
       addScanReceipt({
@@ -1655,13 +1813,35 @@ export default function App() {
       isDestructive: true,
       onConfirm: async () => {
         setConfirmDialog(p => ({ ...p, isOpen: false }));
-        if (!token || !spreadsheetId) return;
+        if (!isOfflineMode && (!token || !spreadsheetId)) return;
 
         setIsLoadingOrders(true);
         
         // Find row index
         const index = orders.findIndex(o => o.id === selectedOrder.id);
         if (index === -1) return;
+
+        if (isOfflineMode) {
+          setOrders(prev => {
+            const updated = prev.filter(o => o.id !== selectedOrder.id);
+            safeStorage.setItem('offline_orders_snapshot', JSON.stringify({
+              lastSync: new Date().toISOString(),
+              orders: updated
+            }));
+            return updated;
+          });
+          setSelectedOrder(null);
+          setIsLoadingOrders(false);
+          addScanReceipt({
+            orderId: selectedOrder.id,
+            previousStage: selectedOrder.status,
+            newStage: 'PENDING_PICKING',
+            timestamp: new Date().toLocaleTimeString(),
+            message: `Operator: Removed tracking row completely from Local Storage.`,
+            success: true
+          });
+          return;
+        }
 
         try {
           // Clear the data of this row in Google Sheets
@@ -2976,30 +3156,49 @@ export default function App() {
               </div>
             </button>
           ) : (
-            <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-center">
+            <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-center font-sans">
               {/* Sheets connection status widget */}
-              <div className="hidden md:flex flex-col text-right">
+              <div className="flex flex-col text-right">
                 <span className="text-xs font-bold text-slate-800 max-w-[200px] truncate">
-                  {user.displayName || user.email}
+                  {isOfflineMode ? 'Offline Storage' : (user?.displayName || user?.email || 'Connected')}
                 </span>
-                <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-1 justify-end uppercase tracking-wider">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Google Active
+                <span className={`text-[10px] font-bold flex items-center gap-1 justify-end uppercase tracking-wider ${
+                  isOfflineMode ? 'text-amber-600' : 'text-emerald-600'
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${
+                    isOfflineMode ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse'
+                  }`} />
+                  {isOfflineMode ? 'Offline Active' : 'Google Connected'}
                 </span>
               </div>
 
-              {!spreadsheetId && (
+              {isOfflineMode ? (
                 <button
-                  onClick={() => setIsConfiguringSheet(true)}
-                  className="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold px-3 py-1.5 rounded-xl border-2 border-slate-900 transition-colors flex items-center gap-1.5 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]"
+                  onClick={() => {
+                    setIsOfflineMode(false);
+                    safeStorage.setItem('scanflow_offline_mode', 'false');
+                    setNeedsAuth(true);
+                  }}
+                  className="bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-xl border-2 border-slate-900 transition-colors flex items-center gap-1 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:scale-95 duration-100 uppercase"
+                  title="Switch to online cloud storage"
                 >
-                  <Database className="w-3.5 h-3.5" /> Setup Spreadsheet
+                  <Database className="w-3 h-3" /> Connect Cloud
                 </button>
+              ) : (
+                !spreadsheetId && (
+                  <button
+                    onClick={() => setIsConfiguringSheet(true)}
+                    className="bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-bold px-3 py-1.5 rounded-xl border-2 border-slate-900 transition-colors flex items-center gap-1.5 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] uppercase"
+                  >
+                    <Database className="w-3.5 h-3.5" /> Setup Spreadsheet
+                  </button>
+                )
               )}
 
               <button
                 onClick={handleLogout}
                 className="text-slate-400 hover:text-rose-600 p-2 rounded-lg hover:bg-slate-100 transition-colors"
-                title="Disconnect from Google"
+                title={isOfflineMode ? "Go to Online Sign-In" : "Disconnect from Google"}
               >
                 <Power className="w-4 h-4 text-slate-900" />
               </button>
@@ -3525,7 +3724,13 @@ export default function App() {
             {currentTab === 'registry' ? (
               <>
                 {renderKpiSection()}
-                <div id="order-registry-main-panel" className="bg-white rounded-3xl border-2 border-slate-900 p-2.5 sm:p-4 md:p-6 flex flex-col flex-1 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] w-full min-w-0">
+                <div 
+                  id="order-registry-main-panel" 
+                  className={isRegistryFullscreen
+                    ? "fixed inset-0 z-40 bg-white p-4 md:p-8 overflow-y-auto flex flex-col w-full h-full"
+                    : "bg-white rounded-3xl border-2 border-slate-900 p-2.5 sm:p-4 md:p-6 flex flex-col flex-1 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] w-full min-w-0"
+                  }
+                >
             
             {/* Action Bar */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5 border-b-2 border-slate-900 pb-5">
@@ -3539,15 +3744,37 @@ export default function App() {
                 </p>
               </div>
 
-              {/* Interactive Registry Trigger button */}
-              <button
-                disabled={!spreadsheetId}
-                onClick={() => setIsAddModalOpen(true)}
-                className="bg-slate-900 hover:bg-black text-white font-bold text-xs px-4 py-2.5 rounded-xl flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:translate-y-[-1px] cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-                title={!spreadsheetId ? 'Requires connecting to Google Sheets' : ''}
-              >
-                <Plus className="w-4 h-4 text-emerald-400" /> Register Order
-              </button>
+              <div className="flex items-center gap-2 sm:gap-3 flex-wrap md:flex-nowrap shrink-0">
+                {/* Fullscreen View Button */}
+                <button
+                  type="button"
+                  onClick={toggleRegistryFullscreen}
+                  className="bg-[#f0f6ff] hover:bg-[#e0efff] active:translate-y-0.5 text-blue-900 py-2.5 px-4 rounded-xl font-bold uppercase tracking-wider text-[11px] border-2 border-slate-900 flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] select-none shrink-0"
+                  title={isRegistryFullscreen ? "Exit Fullscreen" : "Fullscreen View"}
+                >
+                  {isRegistryFullscreen ? (
+                    <>
+                      <Minimize2 className="w-4 h-4 text-rose-500 shrink-0" />
+                      <span className="font-display font-black tracking-wide">Exit Fullscreen</span>
+                    </>
+                  ) : (
+                    <>
+                      <Maximize2 className="w-4 h-4 text-indigo-500 shrink-0" />
+                      <span className="font-display font-black tracking-wide">Fullscreen View</span>
+                    </>
+                  )}
+                </button>
+
+                {/* Interactive Registry Trigger button */}
+                <button
+                  disabled={!spreadsheetId && !isOfflineMode}
+                  onClick={() => setIsAddModalOpen(true)}
+                  className="bg-slate-900 hover:bg-black text-white font-bold text-xs px-4 py-2.5 rounded-xl flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:translate-y-[-1px] cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={!spreadsheetId && !isOfflineMode ? 'Requires connecting to Google Sheets' : ''}
+                >
+                  <Plus className="w-4 h-4 text-emerald-400" /> Register Order
+                </button>
+              </div>
 
             </div>
 
