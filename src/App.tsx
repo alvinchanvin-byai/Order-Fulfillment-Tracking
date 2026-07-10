@@ -315,6 +315,7 @@ export default function App() {
   const [spreadsheetName, setSpreadsheetName] = useState<string>('');
   const [isConfiguringSheet, setIsConfiguringSheet] = useState(false);
   const [sheetIdInput, setSheetIdInput] = useState('');
+  const [localSheetIdInput, setLocalSheetIdInput] = useState('');
   const [discoveredSheets, setDiscoveredSheets] = useState<{ id: string; name: string }[]>([]);
   const [searchingSheets, setSearchingSheets] = useState(false);
   const [createTitleInput, setCreateTitleInput] = useState('Product Inventory Database');
@@ -720,12 +721,12 @@ export default function App() {
     };
   }, []);
 
-  // Sync / Fetch Orders when Spreadsheet ID or Token changes
+  // Sync / Fetch Orders when Spreadsheet ID, Token, or Offline Mode changes
   useEffect(() => {
-    if (token && spreadsheetId) {
+    if (spreadsheetId) {
       handleRefreshOrders();
     }
-  }, [token, spreadsheetId]);
+  }, [token, spreadsheetId, isOfflineMode]);
 
   // Sync orders to offline snapshot cache whenever orders updates
   useEffect(() => {
@@ -944,33 +945,61 @@ export default function App() {
     }
   };
 
-  const handleConnectExistingSheet = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!token || !sheetIdInput.trim()) return;
+  const handleConnectSpreadsheetId = async (idToConnect: string) => {
+    const trimmedId = idToConnect.trim();
+    if (!trimmedId) return;
 
     setIsLoadingOrders(true);
     try {
-      // Validate spreadsheet access & set tab "Orders"
-      await ensureOrdersSheetExists(token, sheetIdInput.trim());
+      let fetched: Order[] = [];
+      if (token) {
+        // Validate spreadsheet access & set tab "Orders"
+        await ensureOrdersSheetExists(token, trimmedId);
+        fetched = await fetchOrdersFromSheet(token, trimmedId);
+      } else {
+        // Without Google login, validate and fetch using public viz endpoint
+        fetched = await fetchPublicOrdersFromSheet(trimmedId);
+      }
       
-      const constructedUrl = `https://docs.google.com/spreadsheets/d/${sheetIdInput.trim()}/edit`;
-      setSpreadsheetId(sheetIdInput.trim());
+      const constructedUrl = `https://docs.google.com/spreadsheets/d/${trimmedId}/edit`;
+      setSpreadsheetId(trimmedId);
       setSpreadsheetUrl(constructedUrl);
-      setSpreadsheetName('Connected Custom Spreadsheet');
+      setSpreadsheetName(token ? 'Connected Custom Spreadsheet' : 'Connected Public Spreadsheet');
 
       const config: SpreadsheetConfig = {
-        spreadsheetId: sheetIdInput.trim(),
+        spreadsheetId: trimmedId,
         spreadsheetUrl: constructedUrl,
-        sheetName: 'Connected Custom Spreadsheet'
+        sheetName: token ? 'Connected Custom Spreadsheet' : 'Connected Public Spreadsheet'
       };
       safeStorage.setItem('order_tracker_sheet_config', JSON.stringify(config));
+      setOrders(fetched);
+
+      // Save to offline snapshot as well
+      safeStorage.setItem('offline_orders_snapshot', JSON.stringify({
+        lastSync: new Date().toISOString(),
+        orders: fetched
+      }));
+
+      if (!token) {
+        setIsOfflineMode(true);
+        safeStorage.setItem('scanflow_offline_mode', 'true');
+        setNeedsAuth(false);
+      }
+
       setIsConfiguringSheet(false);
-      setSheetIdInput('');
+      alert('Success: Google Sheet database connected and synchronized!');
     } catch (err: any) {
-      alert('Error connecting sheet: ' + (err.message || 'Make sure the Spreadsheet ID is correct and you have permission to access it.') + '\n\n💡 Troubleshoot Permissions:\n1. Ensure that you checked the permissions boxes for "Google Sheets" and "Google Drive" during screen authorization.\n2. Try to Sign Out using the power icon, then Sign In again to authorize. \n3. Ensure your Google account has access to read and write to this specific Spreadsheet ID.');
+      alert('Error connecting sheet: ' + (err.message || 'Make sure the Spreadsheet ID is correct and shared as "Anyone with link can view".') + '\n\n💡 Troubleshooting:\nIf not signed in with a Google account, make sure your sheet sharing permissions are set to "Anyone with the link can view".');
     } finally {
       setIsLoadingOrders(false);
     }
+  };
+
+  const handleConnectExistingSheet = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!sheetIdInput.trim()) return;
+    await handleConnectSpreadsheetId(sheetIdInput);
+    setSheetIdInput('');
   };
 
   const triggerSearchSheets = async () => {
@@ -1009,7 +1038,28 @@ export default function App() {
 
   // Pull orders from sheets
   const handleRefreshOrders = async () => {
-    if (isOfflineMode) return;
+    if (isOfflineMode) {
+      if (spreadsheetId) {
+        setIsLoadingOrders(true);
+        try {
+          const fetched = await fetchPublicOrdersFromSheet(spreadsheetId);
+          setOrders(fetched);
+          
+          if (selectedOrder) {
+            const updatedSelected = fetched.find(o => o.id === selectedOrder.id);
+            if (updatedSelected) {
+              setSelectedOrder(updatedSelected);
+            }
+          }
+        } catch (err: any) {
+          console.warn('Failed to refresh public spreadsheet data:', err);
+        } finally {
+          setIsLoadingOrders(false);
+        }
+      }
+      return;
+    }
+
     if (!token || !spreadsheetId) return;
     setIsLoadingOrders(true);
     try {
@@ -1378,7 +1428,8 @@ export default function App() {
 
   // Submit delivery outcome selection (Success, Incomplete, Return)
   const handleDeliveryOutcomeSubmit = async (outcome: DeliveryOutcome) => {
-    if (!token || !spreadsheetId || !pendingDeliveryOrderId) return;
+    if (!isOfflineMode && (!token || !spreadsheetId)) return;
+    if (!pendingDeliveryOrderId) return;
     setIsDeliveryOutcomeOpen(false);
 
     const order = orders.find(o => o.id === pendingDeliveryOrderId);
@@ -1530,7 +1581,7 @@ export default function App() {
       }
     }
 
-    if (!token || !spreadsheetId) return;
+    if (!isOfflineMode && (!token || !spreadsheetId)) return;
 
     setIsLoadingOrders(true);
     const timestamp = new Date().toISOString();
@@ -1713,7 +1764,7 @@ export default function App() {
       confirmText: 'Yes, Override Row',
       onConfirm: async () => {
         setConfirmDialog(p => ({ ...p, isOpen: false }));
-        if (!token || !spreadsheetId) return;
+        if (!isOfflineMode && (!token || !spreadsheetId)) return;
 
         setIsLoadingOrders(true);
         const timestamp = new Date().toISOString();
@@ -3160,15 +3211,15 @@ export default function App() {
               {/* Sheets connection status widget */}
               <div className="flex flex-col text-right">
                 <span className="text-xs font-bold text-slate-800 max-w-[200px] truncate">
-                  {isOfflineMode ? 'Offline Storage' : (user?.displayName || user?.email || 'Connected')}
+                  {isOfflineMode ? (spreadsheetId ? 'Sheet Link Connected' : 'Offline Storage') : (user?.displayName || user?.email || 'Connected')}
                 </span>
                 <span className={`text-[10px] font-bold flex items-center gap-1 justify-end uppercase tracking-wider ${
-                  isOfflineMode ? 'text-amber-600' : 'text-emerald-600'
+                  isOfflineMode ? (spreadsheetId ? 'text-blue-600' : 'text-amber-600') : 'text-emerald-600'
                 }`}>
                   <span className={`w-1.5 h-1.5 rounded-full ${
-                    isOfflineMode ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse'
+                    isOfflineMode ? (spreadsheetId ? 'bg-blue-500' : 'bg-amber-500') : 'bg-emerald-500 animate-pulse'
                   }`} />
-                  {isOfflineMode ? 'Offline Active' : 'Google Connected'}
+                  {isOfflineMode ? (spreadsheetId ? 'Synced (Local Sync)' : 'Offline Active') : 'Google Connected'}
                 </span>
               </div>
 
@@ -3920,24 +3971,87 @@ export default function App() {
                   <span className="text-xs font-semibold">Loading orders from Google Sheets...</span>
                 </div>
               ) : !spreadsheetId ? (
-                <div className="border border-amber-100 bg-amber-50/50 p-6 rounded-2xl text-center text-sm text-amber-800 max-w-md mx-auto my-10 space-y-3">
-                  <Database className="w-8 h-8 text-amber-500 mx-auto" />
-                  <h4 className="font-bold">Persistent Google Sheet storage required</h4>
-                  <p className="text-xs text-amber-700/90 leading-relaxed">
-                    Please log in with Google and setup a spreadsheet destination first to begin writing and reading order records in real-time.
-                  </p>
-                  <button
-                    onClick={() => {
-                      if (needsAuth) {
-                        handleLogin();
-                      } else {
-                        setIsConfiguringSheet(true);
-                      }
+                <div className="max-w-xl mx-auto my-12 p-8 bg-white border-2 border-slate-900 rounded-[24px] shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] space-y-6">
+                  <div className="text-center space-y-2 font-sans">
+                    <div className="inline-flex bg-amber-50 border-2 border-amber-500/20 text-amber-600 p-3 rounded-2xl">
+                      <Database className="w-8 h-8" />
+                    </div>
+                    <h3 className="font-sans font-black text-slate-900 text-lg uppercase tracking-tight">Connect Google Sheet Database</h3>
+                    <p className="text-xs text-slate-500 leading-relaxed max-w-sm mx-auto font-medium">
+                      Enter your spreadsheet ID directly to synchronize order data instantly, or sign in with your Google account.
+                    </p>
+                  </div>
+
+                  {/* Connect directly form */}
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      if (!localSheetIdInput.trim()) return;
+                      await handleConnectSpreadsheetId(localSheetIdInput);
                     }}
-                    className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs px-4 py-2 rounded-xl border border-amber-600/10 transition-colors inline-block"
+                    className="space-y-3 font-sans"
                   >
-                    Set up now
-                  </button>
+                    <div className="space-y-1.5">
+                      <label className="block text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">
+                        Google Spreadsheet ID
+                      </label>
+                      <input
+                        type="text"
+                        value={localSheetIdInput}
+                        onChange={(e) => setLocalSheetIdInput(e.target.value)}
+                        placeholder="e.g. 1aBCDeFGHiJKlMnOpQRSTuVwx..."
+                        className="w-full bg-slate-50 border-2 border-slate-900 rounded-xl px-4 py-3 text-xs font-mono font-bold text-slate-800 outline-none focus:bg-white focus:ring-4 focus:ring-blue-100/50 transition-all"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={isLoadingOrders || !localSheetIdInput.trim()}
+                      className="w-full bg-slate-900 hover:bg-slate-850 disabled:opacity-50 text-white font-black py-3.5 border-2 border-slate-900 rounded-xl text-xs uppercase tracking-wider transition-all shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] hover:translate-y-[-1px] hover:shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] active:translate-y-[1px] active:shadow-[1px_1px_0px_0px_rgba(15,23,42,1)] flex items-center justify-center gap-2 cursor-pointer select-none"
+                    >
+                      <Database className="w-4 h-4 text-white" />
+                      <span>{isLoadingOrders ? 'Connecting Sheet...' : 'Connect Sheet ID'}</span>
+                    </button>
+                    <p className="text-[10px] text-slate-400 leading-snug text-center pt-1 font-medium">
+                      💡 Tip: Share your Google Sheet as <span className="font-semibold text-slate-500">"Anyone with the link can view"</span> if accessing without Google Sign-In.
+                    </p>
+                  </form>
+
+                  <div className="relative flex py-2 items-center font-sans">
+                    <div className="flex-grow border-t-2 border-slate-100"></div>
+                    <span className="flex-shrink mx-4 text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">Or Authenticate</span>
+                    <div className="flex-grow border-t-2 border-slate-100"></div>
+                  </div>
+
+                  <div className="flex justify-center font-sans">
+                    {needsAuth ? (
+                      <button
+                        onClick={handleLogin}
+                        disabled={isLoggingIn}
+                        className="gsi-material-button text-xs select-none shadow-sm hover:shadow-md transition-shadow active:scale-95 duration-150 border-2 border-slate-900 rounded-xl w-full"
+                      >
+                        <div className="gsi-material-button-state"></div>
+                        <div className="gsi-material-button-content-wrapper">
+                          <div className="gsi-material-button-icon">
+                            <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" style={{ display: 'block' }}>
+                              <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                              <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                              <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                              <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+                            </svg>
+                          </div>
+                          <span className="gsi-material-button-contents pr-2">Sign in with Google Account</span>
+                        </div>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => setIsConfiguringSheet(true)}
+                        className="w-full py-3 bg-blue-50 hover:bg-blue-100 text-blue-700 font-black border-2 border-slate-900 rounded-xl text-xs uppercase tracking-wider transition-colors flex items-center justify-center gap-2 select-none"
+                      >
+                        <Database className="w-4 h-4" />
+                        <span>Browse Google Drive Databases</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               ) : filteredOrders.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-slate-400 text-center">
