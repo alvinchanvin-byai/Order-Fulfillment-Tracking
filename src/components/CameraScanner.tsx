@@ -16,6 +16,16 @@ export function CameraScanner({ onScanSuccess, active }: CameraScannerProps) {
   const [error, setError] = useState<string | null>(null);
   const [isInitializing, setIsInitializing] = useState(false);
   const qrCodeInstanceRef = useRef<Html5Qrcode | null>(null);
+  
+  // Keep latest onScanSuccess in a ref to avoid resetting the scanner when callback reference changes
+  const scanSuccessRef = useRef(onScanSuccess);
+  useEffect(() => {
+    scanSuccessRef.current = onScanSuccess;
+  }, [onScanSuccess]);
+
+  // Prevent multiple rapid scans
+  const lastScanTextRef = useRef<string>('');
+  const lastScanTimeRef = useRef<number>(0);
 
   useEffect(() => {
     if (!active) {
@@ -79,7 +89,21 @@ export function CameraScanner({ onScanSuccess, active }: CameraScannerProps) {
         config,
         (decodedText) => {
           if (isMounted && decodedText) {
-            onScanSuccess(decodedText);
+            const now = Date.now();
+            // Cooldown: ignore same code for 3.5 seconds, and any code for 1.5 seconds
+            if (
+              decodedText === lastScanTextRef.current &&
+              now - lastScanTimeRef.current < 3500
+            ) {
+              return;
+            }
+            if (now - lastScanTimeRef.current < 1500) {
+              return;
+            }
+
+            lastScanTextRef.current = decodedText;
+            lastScanTimeRef.current = now;
+            scanSuccessRef.current(decodedText);
           }
         },
         () => {
@@ -119,7 +143,7 @@ export function CameraScanner({ onScanSuccess, active }: CameraScannerProps) {
         }
       }
     };
-  }, [active, onScanSuccess]);
+  }, [active]);
 
   if (!active) {
     return (
