@@ -1269,7 +1269,7 @@ export default function App() {
       requiredProcess = 'picking';
     } else if (['READY_CHECKING', 'CHECKING_STARTED'].includes(order.status)) {
       requiredProcess = 'checking';
-    } else if (['READY_DELIVERY', 'DELIVERY_STARTED'].includes(order.status)) {
+    } else if (['READY_DELIVERY', 'DELIVERY_STARTED', 'DELIVERED_INCOMPLETE'].includes(order.status)) {
       requiredProcess = 'delivery';
     }
 
@@ -1350,8 +1350,31 @@ export default function App() {
         triggerBeep(true);
         return; // Halt process here, resumed in outcome prompt
 
-      case 'DELIVERED_SUCCESS':
       case 'DELIVERED_INCOMPLETE':
+        nextStage = 'DELIVERY_STARTED';
+        updatedOrder.status = nextStage;
+        updatedOrder.deliveryStart = timestamp;
+        updatedOrder.deliveryEnd = ''; // Clear delivery end
+        if (activeSystemUser?.username) {
+          updatedOrder.assignedTo = activeSystemUser.username;
+        }
+        
+        const scanPrevAttempts = order.deliveryAttempts || [];
+        const nextAttemptNum = scanPrevAttempts.length + 1;
+        updatedOrder.deliveryAttempts = [
+          ...scanPrevAttempts,
+          {
+            attemptNumber: nextAttemptNum,
+            deliveryStart: timestamp,
+            deliveryEnd: '',
+            status: 'DELIVERY_STARTED',
+            assignedTo: activeSystemUser?.username || order.assignedTo || ''
+          }
+        ];
+        actionDescr = `Re-delivery dispatch started from Incomplete status (Attempt #${nextAttemptNum})`;
+        break;
+
+      case 'DELIVERED_SUCCESS':
       case 'DELIVERED_RETURN':
         const completedMsg = `Scan Warning: "${cleaned}" (SO#: ${order.id}) is already completed and reached final destination status.`;
         setManualScanMessage({ text: completedMsg, isError: true });
@@ -1568,7 +1591,7 @@ export default function App() {
         requiredProcess = 'picking';
       } else if (['READY_CHECKING', 'CHECKING_STARTED'].includes(order.status)) {
         requiredProcess = 'checking';
-      } else if (['READY_DELIVERY', 'DELIVERY_STARTED'].includes(order.status)) {
+      } else if (['READY_DELIVERY', 'DELIVERY_STARTED', 'DELIVERED_INCOMPLETE'].includes(order.status)) {
         requiredProcess = 'delivery';
       }
     }
