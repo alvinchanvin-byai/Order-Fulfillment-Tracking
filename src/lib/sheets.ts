@@ -57,8 +57,14 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     }
     cachedAccessToken = credential.accessToken;
     return { user: result.user, accessToken: cachedAccessToken };
-  } catch (error) {
-    console.error('Firebase Google Sign-In error:', error);
+  } catch (error: any) {
+    const errMsg = error?.message || '';
+    const errCode = error?.code || '';
+    if (errCode === 'auth/popup-closed-by-user' || errMsg.includes('popup-closed-by-user')) {
+      console.warn('Firebase Google Sign-In: Popup closed by user.');
+    } else {
+      console.error('Firebase Google Sign-In error:', error);
+    }
     throw error;
   } finally {
     isSigningIn = false;

@@ -895,11 +895,26 @@ export default function App() {
         safeStorage.setItem('scanflow_offline_mode', 'false');
       }
     } catch (err: any) {
-      console.error('Oauth login failed', err);
-      alert(`Google Sign-In Failed: ${err.message || err}.\n\nActivating Standalone Offline Storage Mode (saves directly to your browser storage) so you can use the application fully.`);
-      setIsOfflineMode(true);
-      safeStorage.setItem('scanflow_offline_mode', 'true');
-      setNeedsAuth(false);
+      const errMsg = err.message || '';
+      const errCode = err.code || '';
+      
+      if (errCode === 'auth/popup-closed-by-user' || errMsg.includes('popup-closed-by-user')) {
+        console.warn('Google Sign-In: The login window was closed before completion.');
+        // User closed the popup, let them try again without forcing offline mode
+        alert('Google Sign-In: The login window was closed before completion. Please try signing in again if you want to connect Google Sheets.');
+      } else if (errCode === 'auth/popup-blocked' || errMsg.includes('popup-blocked')) {
+        console.error('Oauth login failed (popup blocked)', err);
+        alert('Google Sign-In: The login popup was blocked by your browser. Please allow popups for this site and try again.');
+      } else if (errCode === 'auth/cancelled-popup-request' || errMsg.includes('cancelled-popup-request')) {
+        console.warn('Google Sign-In: The sign-in request was cancelled.');
+        alert('Google Sign-In: The sign-in request was cancelled. Please try again.');
+      } else {
+        console.error('Oauth login failed', err);
+        alert(`Google Sign-In Failed: ${errMsg || err}.\n\nActivating Standalone Offline Storage Mode (saves directly to your browser storage) so you can use the application fully.`);
+        setIsOfflineMode(true);
+        safeStorage.setItem('scanflow_offline_mode', 'true');
+        setNeedsAuth(false);
+      }
     } finally {
       setIsLoggingIn(false);
     }
