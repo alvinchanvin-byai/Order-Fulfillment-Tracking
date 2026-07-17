@@ -1420,7 +1420,6 @@ export default function App() {
     setIsLoadingOrders(true);
     try {
       await saveOrUpdateOrder(updatedOrder);
-      setSelectedOrder(updatedOrder);
 
       setManualScanMessage({ text: `Approved: Match found (${cleaned}). ${order.id} moved to ${getStageLabel(nextStage)}`, isError: false });
       addScanReceipt({
@@ -3538,7 +3537,7 @@ export default function App() {
               <div className="p-2.5 bg-slate-900 border border-slate-800 rounded-xl text-[#00cc88] shrink-0 flex items-center justify-center">
                 <Database className="w-5 h-5" />
               </div>
-              <div className="min-w-0 space-y-1">
+              <div className="min-w-0 space-y-1.5">
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <span className="text-[11px] sm:text-xs font-bold text-slate-400 uppercase tracking-wider">Inventory Source:</span>
                   <a
@@ -3552,28 +3551,33 @@ export default function App() {
                     <ExternalLink className="w-3.5 h-3.5 stroke-[2.5]" />
                   </a>
                 </div>
-                <p className="text-[10px] text-slate-500 font-mono tracking-wider truncate" title="Spreadsheet ID">
-                  ID: <span className="select-all">{spreadsheetId}</span>
-                </p>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                  <p className="text-[10px] text-slate-500 font-mono tracking-wider truncate" title="Spreadsheet ID">
+                    ID: <span className="select-all">{spreadsheetId}</span>
+                  </p>
+                  <span className="text-slate-800 hidden sm:inline">•</span>
+                  <button
+                    type="button"
+                    onClick={() => setIsConfiguringSheet(true)}
+                    className="text-[10px] font-bold text-slate-400 hover:text-white transition-colors cursor-pointer select-none uppercase tracking-wider flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800/60 border border-slate-800 hover:border-slate-700 px-2.5 py-1 rounded-xl shadow-[1px_1px_2px_rgba(0,0,0,0.2)]"
+                    title="Change or select another spreadsheet database"
+                  >
+                    <Settings className="w-3.5 h-3.5 text-[#00cc88]" />
+                    <span>{t('switchDbSheet')}</span>
+                  </button>
+                </div>
               </div>
             </div>
 
             <div className="flex items-center gap-2.5 shrink-0 justify-end">
               <button
                 type="button"
-                onClick={() => setIsConfiguringSheet(true)}
-                className="px-4 py-2 bg-transparent hover:bg-slate-900/40 text-slate-300 hover:text-white border border-slate-700 hover:border-slate-500 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center min-h-[38px] select-none"
-              >
-                Switch DB Sheet
-              </button>
-              <button
-                type="button"
                 onClick={handleRefreshOrders}
                 disabled={isLoadingOrders}
-                className="px-4 py-2 bg-[#00cc88] hover:bg-[#00e699] disabled:bg-emerald-800/40 disabled:text-emerald-500/60 text-slate-950 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-[0px_2px_4px_rgba(0,0,0,0.1)] active:scale-95 disabled:pointer-events-none min-h-[38px] select-none"
+                className="px-5 py-2.5 bg-[#00cc88] hover:bg-[#00e699] disabled:bg-emerald-800/40 disabled:text-emerald-500/60 text-slate-950 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] active:scale-95 disabled:pointer-events-none min-h-[38px] select-none border border-slate-950"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isLoadingOrders ? 'animate-spin' : ''}`} />
-                <span>{isLoadingOrders ? 'Syncing...' : 'Sync Sheet'}</span>
+                <span>{isLoadingOrders ? t('syncing') : t('syncSheet')}</span>
               </button>
             </div>
           </div>
@@ -3809,27 +3813,6 @@ export default function App() {
                   💡 <span className="text-slate-400">Scan Workflow rule:</span> Standard scanning cycles through stages sequentially from Picking ➔ Checking ➔ Delivery ➔ Outcome.
                 </div>
               </div>
-
-              {/* Items Detail */}
-              {selectedOrder && (
-                <div className={`rounded-2xl p-4 border-2 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] text-xs transition-colors ${
-                  selectedOrder.items 
-                    ? 'bg-indigo-50/75 border-indigo-600 text-indigo-950' 
-                    : 'bg-white border-slate-900 text-slate-500'
-                }`}>
-                  <span className={`text-[9px] uppercase font-bold tracking-wider block mb-1.5 font-sans flex items-center gap-1 ${
-                    selectedOrder.items ? 'text-indigo-800' : 'text-slate-400'
-                  }`}>
-                    <MessageSquare className="w-3.5 h-3.5 shrink-0" />
-                    <span>Documented Items & Notes</span>
-                  </span>
-                  <p className={`whitespace-pre-wrap leading-relaxed font-sans ${
-                    selectedOrder.items ? 'text-indigo-950 font-bold' : 'text-slate-500 italic'
-                  }`}>
-                    {selectedOrder.items || 'No customized text information logged.'}
-                  </p>
-                </div>
-              )}
 
             </section>
           )}
@@ -4643,25 +4626,23 @@ export default function App() {
               </div>
 
               {/* Items Detail */}
-              {currentTab !== 'scanner' && (
-                <div className={`rounded-2xl p-4 border-2 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] text-xs transition-colors ${
-                  selectedOrder.items 
-                    ? 'bg-indigo-50/75 border-indigo-600 text-indigo-950' 
-                    : 'bg-white border-slate-900 text-slate-500'
+              <div className={`rounded-2xl p-4 border-2 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] text-xs transition-colors ${
+                selectedOrder.items 
+                  ? 'bg-indigo-50/75 border-indigo-600 text-indigo-950' 
+                  : 'bg-white border-slate-900 text-slate-500'
+              }`}>
+                <span className={`text-[9px] uppercase font-bold tracking-wider block mb-1.5 font-sans flex items-center gap-1 ${
+                  selectedOrder.items ? 'text-indigo-800' : 'text-slate-400'
                 }`}>
-                  <span className={`text-[9px] uppercase font-bold tracking-wider block mb-1.5 font-sans flex items-center gap-1 ${
-                    selectedOrder.items ? 'text-indigo-800' : 'text-slate-400'
-                  }`}>
-                    <MessageSquare className="w-3.5 h-3.5 shrink-0" />
-                    <span>Documented Items & Notes</span>
-                  </span>
-                  <p className={`whitespace-pre-wrap leading-relaxed font-sans ${
-                    selectedOrder.items ? 'text-indigo-950 font-bold' : 'text-slate-500 italic'
-                  }`}>
-                    {selectedOrder.items || 'No customized text information logged.'}
-                  </p>
-                </div>
-              )}
+                  <MessageSquare className="w-3.5 h-3.5 shrink-0" />
+                  <span>Documented Items & Notes</span>
+                </span>
+                <p className={`whitespace-pre-wrap leading-relaxed font-sans ${
+                  selectedOrder.items ? 'text-indigo-950 font-bold' : 'text-slate-500 italic'
+                }`}>
+                  {selectedOrder.items || 'No customized text information logged.'}
+                </p>
+              </div>
 
               {/* Advanced Scanning stage timeline steps */}
               <div className="space-y-3 pt-1">
