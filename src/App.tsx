@@ -874,9 +874,17 @@ export default function App() {
 
   // Ensure non-admins are redirected if they are on a restricted tab
   useEffect(() => {
-    if (activeSystemUser && activeSystemUser.role !== 'admin') {
-      if (currentTab === 'setup' || currentTab === 'users') {
-        setCurrentTab('scanner');
+    if (activeSystemUser) {
+      if (activeSystemUser.role === 'limited') {
+        // Limited users can view setup, but not users
+        if (currentTab === 'users') {
+          setCurrentTab('scanner');
+        }
+      } else if (activeSystemUser.role !== 'admin') {
+        // Other non-admins cannot view setup or users
+        if (currentTab === 'setup' || currentTab === 'users') {
+          setCurrentTab('scanner');
+        }
       }
     }
   }, [activeSystemUser, currentTab]);
@@ -1412,6 +1420,7 @@ export default function App() {
     setIsLoadingOrders(true);
     try {
       await saveOrUpdateOrder(updatedOrder);
+      setSelectedOrder(updatedOrder);
 
       setManualScanMessage({ text: `Approved: Match found (${cleaned}). ${order.id} moved to ${getStageLabel(nextStage)}`, isError: false });
       addScanReceipt({
@@ -3661,7 +3670,7 @@ export default function App() {
             )}
 
             {/* 5. Setup & Config */}
-            {activeSystemUser?.role === 'admin' ? (
+            {activeSystemUser?.role === 'admin' || activeSystemUser?.role === 'limited' ? (
               <button
                 type="button"
                 onClick={() => {
@@ -3681,10 +3690,10 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  alert("Access Denied: Only administrators have permission to access the setup & configuration panel.");
+                  alert("Access Denied: Only administrators or authorized personnel have permission to access the setup & configuration panel.");
                 }}
                 className="w-full md:w-auto md:flex-1 py-2.5 px-2 md:py-3 md:px-4 text-[11px] sm:text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-not-allowed opacity-50 flex items-center justify-center gap-1.5 sm:gap-2 text-slate-400"
-                title="Requires administrator privileges"
+                title="Requires administrator or authorized privileges"
               >
                 <Settings className="w-4 h-4 text-slate-400 shrink-0" />
                 <span className="truncate">{t('setupConfig')}</span>
@@ -3694,7 +3703,7 @@ export default function App() {
         )}
 
         {currentTab === 'setup' ? (
-          <SetupModule token={token} spreadsheetId={spreadsheetId} />
+          <SetupModule token={token} spreadsheetId={spreadsheetId} role={activeSystemUser?.role} />
         ) : currentTab === 'reports' ? (
           <ReportModule orders={orders} />
         ) : currentTab === 'users' ? (
@@ -3800,6 +3809,27 @@ export default function App() {
                   💡 <span className="text-slate-400">Scan Workflow rule:</span> Standard scanning cycles through stages sequentially from Picking ➔ Checking ➔ Delivery ➔ Outcome.
                 </div>
               </div>
+
+              {/* Items Detail */}
+              {selectedOrder && (
+                <div className={`rounded-2xl p-4 border-2 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] text-xs transition-colors ${
+                  selectedOrder.items 
+                    ? 'bg-indigo-50/75 border-indigo-600 text-indigo-950' 
+                    : 'bg-white border-slate-900 text-slate-500'
+                }`}>
+                  <span className={`text-[9px] uppercase font-bold tracking-wider block mb-1.5 font-sans flex items-center gap-1 ${
+                    selectedOrder.items ? 'text-indigo-800' : 'text-slate-400'
+                  }`}>
+                    <MessageSquare className="w-3.5 h-3.5 shrink-0" />
+                    <span>Documented Items & Notes</span>
+                  </span>
+                  <p className={`whitespace-pre-wrap leading-relaxed font-sans ${
+                    selectedOrder.items ? 'text-indigo-950 font-bold' : 'text-slate-500 italic'
+                  }`}>
+                    {selectedOrder.items || 'No customized text information logged.'}
+                  </p>
+                </div>
+              )}
 
             </section>
           )}
@@ -4613,23 +4643,25 @@ export default function App() {
               </div>
 
               {/* Items Detail */}
-              <div className={`rounded-2xl p-4 border-2 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] text-xs transition-colors ${
-                selectedOrder.items 
-                  ? 'bg-indigo-50/75 border-indigo-600 text-indigo-950' 
-                  : 'bg-white border-slate-900 text-slate-500'
-              }`}>
-                <span className={`text-[9px] uppercase font-bold tracking-wider block mb-1.5 font-sans flex items-center gap-1 ${
-                  selectedOrder.items ? 'text-indigo-800' : 'text-slate-400'
+              {currentTab !== 'scanner' && (
+                <div className={`rounded-2xl p-4 border-2 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] text-xs transition-colors ${
+                  selectedOrder.items 
+                    ? 'bg-indigo-50/75 border-indigo-600 text-indigo-950' 
+                    : 'bg-white border-slate-900 text-slate-500'
                 }`}>
-                  <MessageSquare className="w-3.5 h-3.5 shrink-0" />
-                  <span>Documented Items & Notes</span>
-                </span>
-                <p className={`whitespace-pre-wrap leading-relaxed font-sans ${
-                  selectedOrder.items ? 'text-indigo-950 font-bold' : 'text-slate-500 italic'
-                }`}>
-                  {selectedOrder.items || 'No customized text information logged.'}
-                </p>
-              </div>
+                  <span className={`text-[9px] uppercase font-bold tracking-wider block mb-1.5 font-sans flex items-center gap-1 ${
+                    selectedOrder.items ? 'text-indigo-800' : 'text-slate-400'
+                  }`}>
+                    <MessageSquare className="w-3.5 h-3.5 shrink-0" />
+                    <span>Documented Items & Notes</span>
+                  </span>
+                  <p className={`whitespace-pre-wrap leading-relaxed font-sans ${
+                    selectedOrder.items ? 'text-indigo-950 font-bold' : 'text-slate-500 italic'
+                  }`}>
+                    {selectedOrder.items || 'No customized text information logged.'}
+                  </p>
+                </div>
+              )}
 
               {/* Advanced Scanning stage timeline steps */}
               <div className="space-y-3 pt-1">

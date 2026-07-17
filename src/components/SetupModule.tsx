@@ -140,9 +140,12 @@ const DEFAULT_DOCUMENT_TYPES = [
 interface SetupModuleProps {
   token?: string | null;
   spreadsheetId?: string | null;
+  role?: 'admin' | 'limited' | 'view';
 }
 
-export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
+export function SetupModule({ token, spreadsheetId, role }: SetupModuleProps) {
+  const isReadOnly = role === 'limited';
+
   // Option lists states
   const [customers, setCustomers] = useState<string[]>([]);
   const [khans, setKhans] = useState<string[]>([]);
@@ -1126,15 +1129,24 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
     <div className="space-y-6">
       
       {/* Small top header with Restore button, without the large banner */}
-      <div className="flex justify-end items-center">
-        <button
-          type="button"
-          onClick={handleResetToPresets}
-          className="bg-slate-100 hover:bg-slate-200 text-slate-800 px-4 py-2 rounded-xl border-2 border-slate-900 text-xs font-extrabold transition-all uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] active:translate-y-[1px] active:shadow-[1px_1px_0px_0px_rgba(15,23,42,1)] cursor-pointer shrink-0"
-        >
-          <RotateCcw className="w-3.5 h-3.5 text-indigo-600" />
-          <span>Restore Setup Presets</span>
-        </button>
+      <div className="flex justify-between items-center">
+        <div>
+          {isReadOnly && (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 text-amber-800 text-xs font-black border-2 border-slate-900 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] uppercase tracking-wider">
+              🔒 Read-Only Access
+            </span>
+          )}
+        </div>
+        {!isReadOnly && (
+          <button
+            type="button"
+            onClick={handleResetToPresets}
+            className="bg-slate-100 hover:bg-slate-200 text-slate-800 px-4 py-2 rounded-xl border-2 border-slate-900 text-xs font-extrabold transition-all uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] active:translate-y-[1px] active:shadow-[1px_1px_0px_0px_rgba(15,23,42,1)] cursor-pointer shrink-0"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-indigo-600" />
+            <span>Restore Setup Presets</span>
+          </button>
+        )}
       </div>
 
       {/* Embedded toast notification */}
@@ -1169,49 +1181,55 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
             <button
               type="button"
               onClick={() => handleExportList(customers, 'scanflow_customers', 'Customer Name')}
-              className="flex-1 py-1.5 px-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[10px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer animate-none"
+              className={`${isReadOnly ? 'w-full' : 'flex-1'} py-1.5 px-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[10px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer animate-none`}
             >
               <Download className="w-3.5 h-3.5 text-indigo-500" />
               <span>Export Excel (.xlsx)</span>
             </button>
-            <label className="flex-1 py-1.5 px-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[10px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer text-center">
-              <Upload className="w-3.5 h-3.5 text-indigo-500" />
-              <span>Import Excel/CSV</span>
-              <input
-                type="file"
-                accept=".xlsx,.xls,.csv,.txt"
-                onChange={(e) => handleImportList(e, 'customers')}
-                className="hidden"
-              />
-            </label>
-            <button
-              type="button"
-              onClick={handleClearAllCustomers}
-              className="py-1.5 px-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 hover:border-rose-300 rounded-xl text-[10px] font-extrabold transition-all flex items-center justify-center gap-1 cursor-pointer"
-              title="Clear/Wipe Customer list"
-            >
-              <Trash2 className="w-3.5 h-3.5 text-rose-500" />
-              <span>Clean Data</span>
-            </button>
+            {!isReadOnly && (
+              <>
+                <label className="flex-1 py-1.5 px-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[10px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer text-center">
+                  <Upload className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>Import Excel/CSV</span>
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,.csv,.txt"
+                    onChange={(e) => handleImportList(e, 'customers')}
+                    className="hidden"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={handleClearAllCustomers}
+                  className="py-1.5 px-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 hover:border-rose-300 rounded-xl text-[10px] font-extrabold transition-all flex items-center justify-center gap-1 cursor-pointer"
+                  title="Clear/Wipe Customer list"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                  <span>Clean Data</span>
+                </button>
+              </>
+            )}
           </div>
 
           {/* Quick Create Form */}
-          <form onSubmit={handleAddCustomer} className="flex gap-2 mb-3 shrink-0">
-            <input
-              type="text"
-              placeholder="Add new customer name..."
-              value={newCustomer}
-              onChange={(e) => setNewCustomer(e.target.value)}
-              className="flex-1 bg-slate-50 border-2 border-slate-900 rounded-xl px-3 py-1.5 text-xs font-bold focus:bg-white outline-none"
-            />
-            <button
-              type="submit"
-              className="bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-xl border-2 border-slate-900 text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1 active:translate-y-[1px]"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add</span>
-            </button>
-          </form>
+          {!isReadOnly && (
+            <form onSubmit={handleAddCustomer} className="flex gap-2 mb-3 shrink-0">
+              <input
+                type="text"
+                placeholder="Add new customer name..."
+                value={newCustomer}
+                onChange={(e) => setNewCustomer(e.target.value)}
+                className="flex-1 bg-slate-50 border-2 border-slate-900 rounded-xl px-3 py-1.5 text-xs font-bold focus:bg-white outline-none"
+              />
+              <button
+                type="submit"
+                className="bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-xl border-2 border-slate-900 text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1 active:translate-y-[1px]"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add</span>
+              </button>
+            </form>
+          )}
 
           {/* Filter search */}
           <div className="relative mb-3 shrink-0">
@@ -1263,22 +1281,24 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
                         <span className="text-xs font-bold text-slate-800 font-sans tracking-wide truncate pr-2">
                           {val}
                         </span>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handleStartEditCustomer(idx)}
-                            className="p-1 hover:bg-slate-200 rounded-lg text-slate-500 hover:text-slate-800 transition-colors"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteCustomer(idx)}
-                            className="p-1 hover:bg-rose-50 rounded-lg text-slate-400 hover:text-rose-600 transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                        {!isReadOnly && (
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handleStartEditCustomer(idx)}
+                              className="p-1 hover:bg-slate-200 rounded-lg text-slate-500 hover:text-slate-800 transition-colors"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteCustomer(idx)}
+                              className="p-1 hover:bg-rose-50 rounded-lg text-slate-400 hover:text-rose-600 transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
                       </>
                     )}
                   </div>
@@ -1313,49 +1333,55 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
             <button
               type="button"
               onClick={() => handleExportList(khans, 'scanflow_khans', 'District (Khan)')}
-              className="flex-1 py-1.5 px-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[10px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer animate-none"
+              className={`${isReadOnly ? 'w-full' : 'flex-1'} py-1.5 px-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[10px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer animate-none`}
             >
               <Download className="w-3.5 h-3.5 text-orange-500" />
               <span>Export Excel (.xlsx)</span>
             </button>
-            <label className="flex-1 py-1.5 px-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[10px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer text-center">
-              <Upload className="w-3.5 h-3.5 text-orange-500" />
-              <span>Import Excel/CSV</span>
-              <input
-                type="file"
-                accept=".xlsx,.xls,.csv,.txt"
-                onChange={(e) => handleImportList(e, 'khans')}
-                className="hidden"
-              />
-            </label>
-            <button
-              type="button"
-              onClick={handleClearAllKhans}
-              className="py-1.5 px-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 hover:border-rose-300 rounded-xl text-[10px] font-extrabold transition-all flex items-center justify-center gap-1 cursor-pointer"
-              title="Clear/Wipe Districts list"
-            >
-              <Trash2 className="w-3.5 h-3.5 text-rose-500" />
-              <span>Clean Data</span>
-            </button>
+            {!isReadOnly && (
+              <>
+                <label className="flex-1 py-1.5 px-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[10px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer text-center">
+                  <Upload className="w-3.5 h-3.5 text-orange-500" />
+                  <span>Import Excel/CSV</span>
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,.csv,.txt"
+                    onChange={(e) => handleImportList(e, 'khans')}
+                    className="hidden"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={handleClearAllKhans}
+                  className="py-1.5 px-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 hover:border-rose-300 rounded-xl text-[10px] font-extrabold transition-all flex items-center justify-center gap-1 cursor-pointer"
+                  title="Clear/Wipe Districts list"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                  <span>Clean Data</span>
+                </button>
+              </>
+            )}
           </div>
 
           {/* Quick Create Form */}
-          <form onSubmit={handleAddKhan} className="flex gap-2 mb-3 shrink-0">
-            <input
-              type="text"
-              placeholder="Add new Khan/District..."
-              value={newKhan}
-              onChange={(e) => setNewKhan(e.target.value)}
-              className="flex-1 bg-slate-50 border-2 border-slate-900 rounded-xl px-3 py-1.5 text-xs font-bold focus:bg-white outline-none"
-            />
-            <button
-              type="submit"
-              className="bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-xl border-2 border-slate-900 text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1 active:translate-y-[1px]"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add</span>
-            </button>
-          </form>
+          {!isReadOnly && (
+            <form onSubmit={handleAddKhan} className="flex gap-2 mb-3 shrink-0">
+              <input
+                type="text"
+                placeholder="Add new Khan/District..."
+                value={newKhan}
+                onChange={(e) => setNewKhan(e.target.value)}
+                className="flex-1 bg-slate-50 border-2 border-slate-900 rounded-xl px-3 py-1.5 text-xs font-bold focus:bg-white outline-none"
+              />
+              <button
+                type="submit"
+                className="bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-xl border-2 border-slate-900 text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1 active:translate-y-[1px]"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add</span>
+              </button>
+            </form>
+          )}
 
           {/* Filter search */}
           <div className="relative mb-3 shrink-0">
@@ -1407,22 +1433,24 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
                         <span className="text-xs font-bold text-slate-800 font-sans tracking-wide truncate pr-2">
                           {val}
                         </span>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handleStartEditKhan(idx)}
-                            className="p-1 hover:bg-slate-200 rounded-lg text-slate-500 hover:text-slate-800 transition-colors"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteKhan(idx)}
-                            className="p-1 hover:bg-rose-50 rounded-lg text-slate-400 hover:text-rose-600 transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                        {!isReadOnly && (
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handleStartEditKhan(idx)}
+                              className="p-1 hover:bg-slate-200 rounded-lg text-slate-500 hover:text-slate-800 transition-colors"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteKhan(idx)}
+                              className="p-1 hover:bg-rose-50 rounded-lg text-slate-400 hover:text-rose-600 transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
                       </>
                     )}
                   </div>
@@ -1457,40 +1485,44 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
             <button
               type="button"
               onClick={() => handleExportList(provinces, 'scanflow_provinces', 'City or Province')}
-              className="flex-1 py-1.5 px-3 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer animate-none"
+              className={`${isReadOnly ? 'w-full' : 'flex-1'} py-1.5 px-3 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer animate-none`}
             >
               <Download className="w-3.5 h-3.5 text-emerald-600" />
               <span>Export Excel (.xlsx)</span>
             </button>
-            <label className="flex-1 py-1.5 px-3 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer text-center">
-              <Upload className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Import Excel/CSV</span>
-              <input
-                type="file"
-                accept=".xlsx,.xls,.csv,.txt"
-                onChange={(e) => handleImportList(e, 'provinces')}
-                className="hidden"
-              />
-            </label>
+            {!isReadOnly && (
+              <label className="flex-1 py-1.5 px-3 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer text-center">
+                <Upload className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Import Excel/CSV</span>
+                <input
+                  type="file"
+                  accept=".xlsx,.xls,.csv,.txt"
+                  onChange={(e) => handleImportList(e, 'provinces')}
+                  className="hidden"
+                />
+              </label>
+            )}
           </div>
 
           {/* Quick Create Form */}
-          <form onSubmit={handleAddProvince} className="flex gap-2 mb-3 shrink-0">
-            <input
-              type="text"
-              placeholder="Add new City/Province..."
-              value={newProvince}
-              onChange={(e) => setNewProvince(e.target.value)}
-              className="flex-1 bg-slate-50 border-2 border-slate-900 rounded-xl px-3 py-1.5 text-xs font-bold focus:bg-white outline-none"
-            />
-            <button
-              type="submit"
-              className="bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-xl border-2 border-slate-900 text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1 active:translate-y-[1px]"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add</span>
-            </button>
-          </form>
+          {!isReadOnly && (
+            <form onSubmit={handleAddProvince} className="flex gap-2 mb-3 shrink-0">
+              <input
+                type="text"
+                placeholder="Add new City/Province..."
+                value={newProvince}
+                onChange={(e) => setNewProvince(e.target.value)}
+                className="flex-1 bg-slate-50 border-2 border-slate-900 rounded-xl px-3 py-1.5 text-xs font-bold focus:bg-white outline-none"
+              />
+              <button
+                type="submit"
+                className="bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-xl border-2 border-slate-900 text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1 active:translate-y-[1px]"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add</span>
+              </button>
+            </form>
+          )}
 
           {/* Filter search */}
           <div className="relative mb-3 shrink-0">
@@ -1542,22 +1574,24 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
                         <span className="text-xs font-bold text-slate-800 font-sans tracking-wide truncate pr-2">
                           {val}
                         </span>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handleStartEditProvince(idx)}
-                            className="p-1 hover:bg-slate-200 rounded-lg text-slate-500 hover:text-slate-800 transition-colors"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteProvince(idx)}
-                            className="p-1 hover:bg-rose-50 rounded-lg text-slate-400 hover:text-rose-600 transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                        {!isReadOnly && (
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handleStartEditProvince(idx)}
+                              className="p-1 hover:bg-slate-200 rounded-lg text-slate-500 hover:text-slate-800 transition-colors"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteProvince(idx)}
+                              className="p-1 hover:bg-rose-50 rounded-lg text-slate-400 hover:text-rose-600 transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
                       </>
                     )}
                   </div>
@@ -1592,40 +1626,44 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
             <button
               type="button"
               onClick={() => handleExportList(bus, 'scanflow_bus', 'Business Unit')}
-              className="flex-1 py-1.5 px-3 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer animate-none"
+              className={`${isReadOnly ? 'w-full' : 'flex-1'} py-1.5 px-3 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer animate-none`}
             >
               <Download className="w-3.5 h-3.5 text-blue-500" />
               <span>Export Excel (.xlsx)</span>
             </button>
-            <label className="flex-1 py-1.5 px-3 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer text-center">
-              <Upload className="w-3.5 h-3.5 text-blue-500" />
-              <span>Import Excel/CSV</span>
-              <input
-                type="file"
-                accept=".xlsx,.xls,.csv,.txt"
-                onChange={(e) => handleImportList(e, 'bus')}
-                className="hidden"
-              />
-            </label>
+            {!isReadOnly && (
+              <label className="flex-1 py-1.5 px-3 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer text-center">
+                <Upload className="w-3.5 h-3.5 text-blue-500" />
+                <span>Import Excel/CSV</span>
+                <input
+                  type="file"
+                  accept=".xlsx,.xls,.csv,.txt"
+                  onChange={(e) => handleImportList(e, 'bus')}
+                  className="hidden"
+                />
+              </label>
+            )}
           </div>
 
           {/* Quick Create Form */}
-          <form onSubmit={handleAddBu} className="flex gap-2 mb-3 shrink-0">
-            <input
-              type="text"
-              placeholder="Add new Business Unit..."
-              value={newBu}
-              onChange={(e) => setNewBu(e.target.value)}
-              className="flex-1 bg-slate-50 border-2 border-slate-900 rounded-xl px-3 py-1.5 text-xs font-bold focus:bg-white outline-none"
-            />
-            <button
-              type="submit"
-              className="bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-xl border-2 border-slate-900 text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1 active:translate-y-[1px]"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add</span>
-            </button>
-          </form>
+          {!isReadOnly && (
+            <form onSubmit={handleAddBu} className="flex gap-2 mb-3 shrink-0">
+              <input
+                type="text"
+                placeholder="Add new Business Unit..."
+                value={newBu}
+                onChange={(e) => setNewBu(e.target.value)}
+                className="flex-1 bg-slate-50 border-2 border-slate-900 rounded-xl px-3 py-1.5 text-xs font-bold focus:bg-white outline-none"
+              />
+              <button
+                type="submit"
+                className="bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-xl border-2 border-slate-900 text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1 active:translate-y-[1px]"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add</span>
+              </button>
+            </form>
+          )}
 
           {/* Filter search */}
           <div className="relative mb-3 shrink-0">
@@ -1677,22 +1715,24 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
                         <span className="text-xs font-bold text-slate-800 font-sans tracking-wide truncate pr-2">
                           {val}
                         </span>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handleStartEditBu(idx)}
-                            className="p-1 hover:bg-slate-200 rounded-lg text-slate-500 hover:text-slate-800 transition-colors"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteBu(idx)}
-                            className="p-1 hover:bg-rose-50 rounded-lg text-slate-400 hover:text-rose-600 transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                        {!isReadOnly && (
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handleStartEditBu(idx)}
+                              className="p-1 hover:bg-slate-200 rounded-lg text-slate-500 hover:text-slate-800 transition-colors"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteBu(idx)}
+                              className="p-1 hover:bg-rose-50 rounded-lg text-slate-400 hover:text-rose-600 transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
                       </>
                     )}
                   </div>
@@ -1727,40 +1767,44 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
             <button
               type="button"
               onClick={() => handleExportList(packageUnits, 'scanflow_package_units', 'Package Unit')}
-              className="flex-1 py-1.5 px-3 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer animate-none"
+              className={`${isReadOnly ? 'w-full' : 'flex-1'} py-1.5 px-3 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer animate-none`}
             >
               <Download className="w-3.5 h-3.5 text-indigo-500" />
               <span>Export Excel (.xlsx)</span>
             </button>
-            <label className="flex-1 py-1.5 px-3 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer text-center">
-              <Upload className="w-3.5 h-3.5 text-indigo-500" />
-              <span>Import Excel/CSV</span>
-              <input
-                type="file"
-                accept=".xlsx,.xls,.csv,.txt"
-                onChange={(e) => handleImportList(e, 'package_units')}
-                className="hidden"
-              />
-            </label>
+            {!isReadOnly && (
+              <label className="flex-1 py-1.5 px-3 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer text-center">
+                <Upload className="w-3.5 h-3.5 text-indigo-500" />
+                <span>Import Excel/CSV</span>
+                <input
+                  type="file"
+                  accept=".xlsx,.xls,.csv,.txt"
+                  onChange={(e) => handleImportList(e, 'package_units')}
+                  className="hidden"
+                />
+              </label>
+            )}
           </div>
 
           {/* Quick Create Form */}
-          <form onSubmit={handleAddPackageUnit} className="flex gap-2 mb-3 shrink-0">
-            <input
-              type="text"
-              placeholder="Add new Package Unit..."
-              value={newPackageUnit}
-              onChange={(e) => setNewPackageUnit(e.target.value)}
-              className="flex-1 bg-slate-50 border-2 border-slate-900 rounded-xl px-3 py-1.5 text-xs font-bold focus:bg-white outline-none"
-            />
-            <button
-              type="submit"
-              className="bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-xl border-2 border-slate-900 text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1 active:translate-y-[1px]"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add</span>
-            </button>
-          </form>
+          {!isReadOnly && (
+            <form onSubmit={handleAddPackageUnit} className="flex gap-2 mb-3 shrink-0">
+              <input
+                type="text"
+                placeholder="Add new Package Unit..."
+                value={newPackageUnit}
+                onChange={(e) => setNewPackageUnit(e.target.value)}
+                className="flex-1 bg-slate-50 border-2 border-slate-900 rounded-xl px-3 py-1.5 text-xs font-bold focus:bg-white outline-none"
+              />
+              <button
+                type="submit"
+                className="bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-xl border-2 border-slate-900 text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1 active:translate-y-[1px]"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add</span>
+              </button>
+            </form>
+          )}
 
           {/* Filter search */}
           <div className="relative mb-3 shrink-0">
@@ -1812,22 +1856,24 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
                         <span className="text-xs font-bold text-slate-800 font-sans tracking-wide truncate pr-2">
                           {val}
                         </span>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handleStartEditPackageUnit(idx)}
-                            className="p-1 hover:bg-slate-200 rounded-lg text-slate-500 hover:text-slate-800 transition-colors"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeletePackageUnit(idx)}
-                            className="p-1 hover:bg-rose-50 rounded-lg text-slate-400 hover:text-rose-600 transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                        {!isReadOnly && (
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handleStartEditPackageUnit(idx)}
+                              className="p-1 hover:bg-slate-200 rounded-lg text-slate-500 hover:text-slate-800 transition-colors"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeletePackageUnit(idx)}
+                              className="p-1 hover:bg-rose-50 rounded-lg text-slate-400 hover:text-rose-600 transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
                       </>
                     )}
                   </div>
@@ -1862,40 +1908,44 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
             <button
               type="button"
               onClick={() => handleExportList(documentTypes, 'scanflow_document_types', 'Document Type')}
-              className="flex-1 bg-white hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-xl border-2 border-slate-900 text-xs font-bold transition-all uppercase tracking-wide flex items-center justify-center gap-1 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] active:translate-y-[1px]"
+              className={`${isReadOnly ? 'w-full' : 'flex-1'} bg-white hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-xl border-2 border-slate-900 text-xs font-bold transition-all uppercase tracking-wide flex items-center justify-center gap-1 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] active:translate-y-[1px]`}
             >
               <Download className="w-3.5 h-3.5" />
               <span>Export</span>
             </button>
-            <label className="flex-1 bg-white hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-xl border-2 border-slate-900 text-xs font-bold transition-all uppercase tracking-wide flex items-center justify-center gap-1 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] active:translate-y-[1px] cursor-pointer text-center">
-              <Upload className="w-3.5 h-3.5" />
-              <span>Import</span>
-              <input
-                type="file"
-                accept=".xlsx,.xls,.csv,.txt"
-                onChange={(e) => handleImportList(e, 'document_types')}
-                className="hidden"
-              />
-            </label>
+            {!isReadOnly && (
+              <label className="flex-1 bg-white hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-xl border-2 border-slate-900 text-xs font-bold transition-all uppercase tracking-wide flex items-center justify-center gap-1 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] active:translate-y-[1px] cursor-pointer text-center">
+                <Upload className="w-3.5 h-3.5" />
+                <span>Import</span>
+                <input
+                  type="file"
+                  accept=".xlsx,.xls,.csv,.txt"
+                  onChange={(e) => handleImportList(e, 'document_types')}
+                  className="hidden"
+                />
+              </label>
+            )}
           </div>
 
           {/* Quick Create Form */}
-          <form onSubmit={handleAddDocumentType} className="flex gap-2 mb-3 shrink-0">
-            <input
-              type="text"
-              placeholder="Add new Document Type..."
-              value={newDocumentType}
-              onChange={(e) => setNewDocumentType(e.target.value)}
-              className="flex-1 bg-slate-50 border-2 border-slate-900 rounded-xl px-3 py-1.5 text-xs font-bold focus:bg-white outline-none"
-            />
-            <button
-              type="submit"
-              className="bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-xl border-2 border-slate-900 text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1 active:translate-y-[1px]"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add</span>
-            </button>
-          </form>
+          {!isReadOnly && (
+            <form onSubmit={handleAddDocumentType} className="flex gap-2 mb-3 shrink-0">
+              <input
+                type="text"
+                placeholder="Add new Document Type..."
+                value={newDocumentType}
+                onChange={(e) => setNewDocumentType(e.target.value)}
+                className="flex-1 bg-slate-50 border-2 border-slate-900 rounded-xl px-3 py-1.5 text-xs font-bold focus:bg-white outline-none"
+              />
+              <button
+                type="submit"
+                className="bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-xl border-2 border-slate-900 text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1 active:translate-y-[1px]"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add</span>
+              </button>
+            </form>
+          )}
 
           {/* Filter search */}
           <div className="relative mb-3 shrink-0">
@@ -1947,22 +1997,24 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
                         <span className="text-xs font-bold text-slate-800 font-sans tracking-wide truncate pr-2">
                           {val}
                         </span>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handleStartEditDocumentType(idx)}
-                            className="p-1 hover:bg-slate-200 rounded-lg text-slate-500 hover:text-slate-800 transition-colors"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteDocumentType(idx)}
-                            className="p-1 hover:bg-rose-50 rounded-lg text-slate-400 hover:text-rose-600 transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                        {!isReadOnly && (
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handleStartEditDocumentType(idx)}
+                              className="p-1 hover:bg-slate-200 rounded-lg text-slate-500 hover:text-slate-800 transition-colors"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteDocumentType(idx)}
+                              className="p-1 hover:bg-rose-50 rounded-lg text-slate-400 hover:text-rose-600 transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
                       </>
                     )}
                   </div>
@@ -2005,16 +2057,18 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
                 <Download className="w-3.5 h-3.5 text-indigo-500" />
                 <span>Export Excel (.xlsx)</span>
               </button>
-              <label className="py-1.5 px-4 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer text-center">
-                <Upload className="w-3.5 h-3.5 text-indigo-500" />
-                <span>Import Excel/CSV</span>
-                <input
-                  type="file"
-                  accept=".xlsx,.xls,.csv,.txt"
-                  onChange={handleImportMasterList}
-                  className="hidden"
-                />
-              </label>
+              {!isReadOnly && (
+                <label className="py-1.5 px-4 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 hover:border-slate-300 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer text-center">
+                  <Upload className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>Import Excel/CSV</span>
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,.csv,.txt"
+                    onChange={handleImportMasterList}
+                    className="hidden"
+                  />
+                </label>
+              )}
             </div>
             <div className="hidden sm:block flex-1"></div>
             
@@ -2032,59 +2086,61 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
           </div>
 
           {/* Quick Create Fields */}
-          <form onSubmit={handleAddCustomerMaster} className="bg-slate-50 rounded-2xl p-4 border-2 border-slate-900 mb-4 shrink-0">
-            <h4 className="text-[11px] font-extrabold text-slate-700 uppercase tracking-widest mb-3">Add Customer Routing Rules</h4>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="space-y-1">
-                <label className="text-[10px] font-extrabold text-slate-500 uppercase">Customer Name</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Pracheachun Pharmacy (SHV)"
-                  value={mCustName}
-                  onChange={(e) => setMCustName(e.target.value)}
-                  className="w-full bg-white border-2 border-slate-900 rounded-xl px-3 py-1.5 text-xs font-bold outline-none"
-                  required
-                />
+          {!isReadOnly && (
+            <form onSubmit={handleAddCustomerMaster} className="bg-slate-50 rounded-2xl p-4 border-2 border-slate-900 mb-4 shrink-0">
+              <h4 className="text-[11px] font-extrabold text-slate-700 uppercase tracking-widest mb-3">Add Customer Routing Rules</h4>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-extrabold text-slate-500 uppercase">Customer Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Pracheachun Pharmacy (SHV)"
+                    value={mCustName}
+                    onChange={(e) => setMCustName(e.target.value)}
+                    className="w-full bg-white border-2 border-slate-900 rounded-xl px-3 py-1.5 text-xs font-bold outline-none"
+                    required
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-extrabold text-slate-500 uppercase">Default Khan / District</label>
+                  <select
+                    value={mCustKhan}
+                    onChange={(e) => setMCustKhan(e.target.value)}
+                    className="w-full bg-white border-2 border-slate-900 rounded-xl px-3 py-1.5 text-xs font-bold outline-none"
+                    required
+                  >
+                    <option value="">Select Khan...</option>
+                    {khans.map((k) => (
+                      <option key={k} value={k}>{k}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-extrabold text-slate-500 uppercase">Default City / Province</label>
+                  <select
+                    value={mCustProvince}
+                    onChange={(e) => setMCustProvince(e.target.value)}
+                    className="w-full bg-white border-2 border-slate-900 rounded-xl px-3 py-1.5 text-xs font-bold outline-none"
+                    required
+                  >
+                    <option value="">Select Province...</option>
+                    {provinces.map((p) => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-extrabold text-slate-500 uppercase">Default Khan / District</label>
-                <select
-                  value={mCustKhan}
-                  onChange={(e) => setMCustKhan(e.target.value)}
-                  className="w-full bg-white border-2 border-slate-900 rounded-xl px-3 py-1.5 text-xs font-bold outline-none"
-                  required
+              <div className="flex justify-end mt-3">
+                <button
+                  type="submit"
+                  className="bg-slate-900 hover:bg-slate-800 text-white px-5 py-1.5 rounded-xl border-2 border-slate-900 text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1 active:translate-y-[1px]"
                 >
-                  <option value="">Select Khan...</option>
-                  {khans.map((k) => (
-                    <option key={k} value={k}>{k}</option>
-                  ))}
-                </select>
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Register Rule</span>
+                </button>
               </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-extrabold text-slate-500 uppercase">Default City / Province</label>
-                <select
-                  value={mCustProvince}
-                  onChange={(e) => setMCustProvince(e.target.value)}
-                  className="w-full bg-white border-2 border-slate-900 rounded-xl px-3 py-1.5 text-xs font-bold outline-none"
-                  required
-                >
-                  <option value="">Select Province...</option>
-                  {provinces.map((p) => (
-                    <option key={p} value={p}>{p}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <div className="flex justify-end mt-3">
-              <button
-                type="submit"
-                className="bg-slate-900 hover:bg-slate-800 text-white px-5 py-1.5 rounded-xl border-2 border-slate-900 text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1 active:translate-y-[1px]"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Register Rule</span>
-              </button>
-            </div>
-          </form>
+            </form>
+          )}
 
           {/* Master List Records Table */}
           <div className="flex-1 overflow-y-auto max-h-[350px] border-2 border-slate-900 rounded-2xl bg-white">
@@ -2094,7 +2150,7 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
                   <th className="px-4 py-2.5 text-[10px] font-extrabold uppercase text-slate-700 tracking-wider">Customer Name</th>
                   <th className="px-4 py-2.5 text-[10px] font-extrabold uppercase text-slate-700 tracking-wider">Default Khan</th>
                   <th className="px-4 py-2.5 text-[10px] font-extrabold uppercase text-slate-700 tracking-wider">Default Province</th>
-                  <th className="px-4 py-2.5 text-[10px] font-extrabold uppercase text-slate-700 tracking-wider text-right">Actions</th>
+                  {!isReadOnly && <th className="px-4 py-2.5 text-[10px] font-extrabold uppercase text-slate-700 tracking-wider text-right">Actions</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-150">
@@ -2165,24 +2221,26 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
                               </span>
                             </td>
                             <td className="px-4 py-3 text-xs font-bold text-slate-500">{m.defaultProvince || 'Not Set'}</td>
-                            <td className="px-4 py-3 text-right">
-                              <div className="flex items-center justify-end gap-1">
-                                <button
-                                  type="button"
-                                  onClick={() => handleStartEditCustomerMaster(idx)}
-                                  className="p-1 hover:bg-slate-200 text-slate-500 hover:text-slate-800 rounded-lg transition-colors"
-                                >
-                                  <Edit3 className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeleteCustomerMaster(idx)}
-                                  className="p-1 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded-lg transition-colors"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </td>
+                            {!isReadOnly && (
+                              <td className="px-4 py-3 text-right">
+                                <div className="flex items-center justify-end gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleStartEditCustomerMaster(idx)}
+                                    className="p-1 hover:bg-slate-200 text-slate-500 hover:text-slate-800 rounded-lg transition-colors"
+                                  >
+                                    <Edit3 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteCustomerMaster(idx)}
+                                    className="p-1 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded-lg transition-colors"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </td>
+                            )}
                           </>
                         )}
                       </tr>
@@ -2190,7 +2248,7 @@ export function SetupModule({ token, spreadsheetId }: SetupModuleProps) {
                   })}
                 {customerMasters.filter((m) => m.customerName.toLowerCase().includes(customerMasterSearch.toLowerCase())).length === 0 && (
                   <tr>
-                    <td colSpan={4} className="text-center py-10 text-slate-400 text-xs italic">
+                    <td colSpan={isReadOnly ? 3 : 4} className="text-center py-10 text-slate-400 text-xs italic">
                       No customer master rules found.
                     </td>
                   </tr>
